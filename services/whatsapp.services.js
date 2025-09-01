@@ -1,3 +1,4 @@
+
 // import axios from 'axios';
 // import logger from '../config/logger.js';
 // import { langchainService } from './ai.services.js';
@@ -50,7 +51,8 @@
 //                 flow_id: flowId,
 //                 flow_token: flowToken,
 //                 flow_action: 'data_exchange',
-//                 flow_cta: 'Register Now',
+//                 flow_cta: 'Register or Sign In',
+//                 whatsapp_number: to, // Pass WhatsApp number to pre-fill phone field
 //               },
 //             },
 //           },
@@ -62,11 +64,11 @@
 //           },
 //         }
 //       );
-//       logger.info(`Registration Flow sent to ${to}: Flow ID ${flowId}`);
+//       logger.info(`Flow sent to ${to}: Flow ID ${flowId}`);
 //       return response.data;
 //     } catch (error) {
-//       logger.error(`Error sending registration Flow to ${to}: ${error.response?.data?.error?.message || error.message}`);
-//       throw new Error(`Failed to send registration Flow: ${error.message}`);
+//       logger.error(`Error sending Flow to ${to}: ${error.response?.data?.error?.message || error.message}`);
+//       throw new Error(`Failed to send Flow: ${error.message}`);
 //     }
 //   }
 
@@ -76,28 +78,53 @@
 //       let user = await prisma.user.findUnique({ where: { whatsappId: from } });
 //       const userId = user ? user.id : null;
 
-//       logger.info(`Received message from ${from} (user ${userId || 'unknown'}): ${message}`);
+//       logger.info(`Received message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)}`);
 
-//       // Check if message is a Flow response
+//       // Handle Flow response
 //       if (typeof message === 'object' && message.type === 'interactive' && message.interactive?.type === 'flow') {
 //         const flowData = message.interactive.flow_response?.data;
-//         if (flowData && flowData.screen === 'REGISTRATION_FORM') {
-//           const { email, phone, firstName, lastName, password, pin } = flowData;
-//           const whatsappId = from;
+//         const screen = message.interactive.flow_response?.screen;
 
-//           // Register user
+//         if (screen === 'SIGN_UP' && flowData) {
+//           const { firstName, lastName, email, phone, password, pin, terms_agreement } = flowData;
+//           if (!terms_agreement) {
+//             await this.sendMessage(from, 'You must agree to the terms and conditions to register.');
+//             return;
+//           }
+//           if (phone !== from) {
+//             await this.sendMessage(from, 'Phone number must match your WhatsApp number.');
+//             return;
+//           }
+
 //           const newUser = await UserService.createUser({
 //             email,
 //             phone,
-//             password,
 //             firstName,
 //             lastName,
+//             password,
 //             pin,
-//             whatsappId,
+//             whatsappId: phone, // Use phone as whatsappId
 //           });
 
 //           await this.sendMessage(from, `Registration successful! Welcome, ${firstName}.`);
 //           logger.info(`User registered via Flow from ${from}: ${email}`);
+//           return;
+//         } else if (screen === 'SIGN_IN' && flowData) {
+//           const { identifier, password } = flowData;
+//           const user = await UserService.findByIdentifier(identifier);
+//           if (!user) {
+//             await this.sendMessage(from, 'User not found. Please register first.');
+//             return;
+//           }
+
+//           const valid = await UserService.verifyPassword(user.id, password);
+//           if (!valid) {
+//             await this.sendMessage(from, 'Invalid credentials. Please try again.');
+//             return;
+//           }
+
+//           await this.sendMessage(from, `Login successful! Welcome back, ${user.firstName}.`);
+//           logger.info(`User logged in via Flow from ${from}: ${identifier}`);
 //           return;
 //         }
 //       }
@@ -105,7 +132,7 @@
 //       // Process other messages with LangChain
 //       const response = await langchainService.processMessage(from, message, userId);
 //       await this.sendMessage(from, response);
-//       logger.info(`Handled message from ${from} (user ${userId || 'unknown'}): ${message} -> Response: ${response}`);
+//       logger.info(`Handled message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)} -> Response: ${response}`);
 //       return response;
 //     } catch (error) {
 //       logger.error(`Error handling message from ${from}: ${error.message}`);
@@ -128,8 +155,6 @@
 // }
 
 // export default WhatsAppService;
-
-
 
 import axios from 'axios';
 import logger from '../config/logger.js';
@@ -184,7 +209,7 @@ class WhatsAppService {
                 flow_token: flowToken,
                 flow_action: 'data_exchange',
                 flow_cta: 'Register or Sign In',
-                whatsapp_number: to, // Pass WhatsApp number to pre-fill phone field
+                whatsapp_number: to, // Pre-fill phone field
               },
             },
           },
@@ -216,49 +241,8 @@ class WhatsAppService {
       if (typeof message === 'object' && message.type === 'interactive' && message.interactive?.type === 'flow') {
         const flowData = message.interactive.flow_response?.data;
         const screen = message.interactive.flow_response?.screen;
-
-        if (screen === 'SIGN_UP' && flowData) {
-          const { firstName, lastName, email, phone, password, pin, terms_agreement } = flowData;
-          if (!terms_agreement) {
-            await this.sendMessage(from, 'You must agree to the terms and conditions to register.');
-            return;
-          }
-          if (phone !== from) {
-            await this.sendMessage(from, 'Phone number must match your WhatsApp number.');
-            return;
-          }
-
-          const newUser = await UserService.createUser({
-            email,
-            phone,
-            firstName,
-            lastName,
-            password,
-            pin,
-            whatsappId: phone, // Use phone as whatsappId
-          });
-
-          await this.sendMessage(from, `Registration successful! Welcome, ${firstName}.`);
-          logger.info(`User registered via Flow from ${from}: ${email}`);
-          return;
-        } else if (screen === 'SIGN_IN' && flowData) {
-          const { identifier, password } = flowData;
-          const user = await UserService.findByIdentifier(identifier);
-          if (!user) {
-            await this.sendMessage(from, 'User not found. Please register first.');
-            return;
-          }
-
-          const valid = await UserService.verifyPassword(user.id, password);
-          if (!valid) {
-            await this.sendMessage(from, 'Invalid credentials. Please try again.');
-            return;
-          }
-
-          await this.sendMessage(from, `Login successful! Welcome back, ${user.firstName}.`);
-          logger.info(`User logged in via Flow from ${from}: ${identifier}`);
-          return;
-        }
+        await this.handleFlowResponse(from, message.interactive.flow_token, screen, flowData);
+        return;
       }
 
       // Process other messages with LangChain
@@ -272,6 +256,63 @@ class WhatsAppService {
     }
   }
 
+  static async handleFlowResponse(from, flowToken, screen, flowData) {
+    try {
+      if (!flowData || !screen) {
+        logger.warn(`Invalid Flow response from ${from}: Missing data or screen`);
+        await this.sendMessage(from, 'Invalid Flow response. Please try again.');
+        return;
+      }
+
+      if (screen === 'SIGN_UP') {
+        const { firstName, lastName, email, phone, password, pin, terms_agreement } = flowData;
+        if (!terms_agreement) {
+          await this.sendMessage(from, 'You must agree to the terms and conditions to register.');
+          return;
+        }
+        if (phone !== from) {
+          await this.sendMessage(from, 'Phone number must match your WhatsApp number.');
+          return;
+        }
+
+        const newUser = await UserService.createUser({
+          email,
+          phone,
+          firstName,
+          lastName,
+          password,
+          pin,
+          whatsappId: phone,
+        });
+
+        await this.sendMessage(from, `Registration successful! Welcome, ${firstName}.`);
+        logger.info(`User registered via Flow from ${from}: ${email}, flow_token: ${flowToken}`);
+      } else if (screen === 'SIGN_IN') {
+        const { identifier, password } = flowData;
+        const user = await UserService.findByIdentifier(identifier);
+        if (!user) {
+          await this.sendMessage(from, 'User not found. Please register first.');
+          return;
+        }
+
+        const valid = await UserService.verifyPassword(user.id, password);
+        if (!valid) {
+          await this.sendMessage(from, 'Invalid credentials. Please try again.');
+          return;
+        }
+
+        await this.sendMessage(from, `Login successful! Welcome back, ${user.firstName}.`);
+        logger.info(`User logged in via Flow from ${from}: ${identifier}, flow_token: ${flowToken}`);
+      } else {
+        logger.warn(`Unsupported Flow screen from ${from}: ${screen}`);
+        await this.sendMessage(from, 'Unsupported Flow screen. Please try again.');
+      }
+    } catch (error) {
+      logger.error(`Error handling Flow response from ${from}: ${error.message}`);
+      await this.sendMessage(from, 'Sorry, something went wrong. Please try again.');
+    }
+  }
+
   static verifyWebhook(req) {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -279,9 +320,11 @@ class WhatsAppService {
 
     if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
       logger.info('Webhook verified successfully');
+      console.log(`[WhatsApp Webhook] Verification successful, challenge: ${challenge}`);
       return challenge;
     }
     logger.warn('Webhook verification failed');
+    console.log('[WhatsApp Webhook] Verification failed: Invalid verify token');
     throw new Error('Invalid verify token');
   }
 }
