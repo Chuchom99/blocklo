@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String   @unique
+  password      String?
+  transactionPin String?
+  firstName     String
+  lastName      String
+  whatsappId    String?  @unique
+  telegramId    String?  @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  kyc           KYC[]
+  accounts      Account[]
+  transactions  Transaction[]
+}
+
+model KYC {
+  id        String    @id @default(uuid())
+  userId    String
+  bvn       String    @unique
+  status    KYCStatus @default(PENDING)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model Account {
+  id            String       @id @default(uuid())
+  userId        String
+  accountNumber String       @unique
+  balance       Float        @default(0.0)
+  currency      String       @default("NGN")
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  user          User         @relation(fields: [userId], references: [id])
+  transactions  Transaction[]
+}
+
+model Transaction {
+  id            String          @id @default(uuid())
+  userId        String
+  accountId     String
+  amount        Float
+  type          TransactionType
+  reference     String          @unique
+  createdAt     DateTime        @default(now())
+  user          User            @relation(fields: [userId], references: [id])
+  account       Account         @relation(fields: [accountId], references: [id])
+}
+
+enum KYCStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+}
