@@ -156,13 +156,48 @@
 
 // export default WhatsAppService;
 
-import axios from 'axios';
 import logger from '../config/logger.js';
 import { langchainService } from './ai.services.js';
 import prisma from '../config/prisma.js';
 import UserService from './user.service.js';
+import axios from 'axios';
+import fs from 'fs';
+
 
 class WhatsAppService {
+   static async uploadPublicKey() {
+    try {
+      if (!process.env.WHATSAPP_REGISTRATION_FLOW_ID) {
+        throw new Error('WHATSAPP_REGISTRATION_FLOW_ID is not set in .env');
+      }
+      if (!process.env.WHATSAPP_PHONE_NUMBER_ID) {
+        throw new Error('WHATSAPP_PHONE_NUMBER_ID is not set in .env');
+      }
+      const publicKey = fs.readFileSync('public_key.pem', 'utf8');
+      const response = await axios.post(
+        `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/whatsapp_business_encryption`,
+        {
+          business_public_key: publicKey,
+          enabled: true
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      console.log(`[WhatsApp] Public key uploaded for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}:`, response.data);
+      logger.info(`Public key uploaded for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}`);
+      return response.data;
+    } catch (error) {
+      const errorMessage = error.response?.data?.error?.message || error.message;
+      console.error(`[WhatsApp] Failed to upload public key for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}:`, error.response?.data || error.message);
+      logger.error(`Failed to upload public key: ${errorMessage}`);
+      throw new Error(`Failed to upload public key: ${errorMessage}`);
+    }
+  }
+
   static async sendMessage(to, message) {
     try {
       if (!process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_ACCESS_TOKEN) {
