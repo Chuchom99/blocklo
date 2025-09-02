@@ -11,6 +11,6 @@ router.use((req, res, next) => {
 });
 
 router.post('/webhook', WhatsAppController.handleWebhook);
-router.post('/flow', WhatsAppController.handleFlowData);
+router.post('/flow', WhatsAppController.handleFlow);
 
 export default router;
