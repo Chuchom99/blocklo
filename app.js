@@ -13,8 +13,8 @@ import walletRoutes from "./routes/wallet.routes.js";
 import psbRoutes from "./routes/psb.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
 import whatsappRoutes from "./routes/whatsapp.routes.js"
-import WhatsAppService from "./services/whatsapp.services.js"
-WhatsAppService.uploadPublicKey();
+// import WhatsAppService from "./services/whatsapp.services.js"
+// WhatsAppService.uploadPublicKey();
 
 const app = express();
 

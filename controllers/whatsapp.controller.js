@@ -93,35 +93,105 @@ class WhatsAppController {
     }
   }
 
-  static async handleFlowData(req, res) {
+  static async handleFlow(req, res) {
     try {
-      // Log the Flow data payload
-      console.log(`[WhatsApp Flow] Received payload: ${JSON.stringify(req.body, null, 2)}`);
+      // Log the entire payload for debugging
+      logger.info(`[WhatsApp Flow] Received payload: ${JSON.stringify(req.body, null, 2)}`);
 
-      const { flow_token, data, screen } = req.body;
-      if (!flow_token || !data || !screen) {
-        console.log('[WhatsApp Flow] Invalid Flow payload received');
-        logger.warn('Invalid Flow payload');
-        return res.status(400).json({ success: false, message: 'Invalid Flow payload' });
+      // Health check handling
+      if (!req.body || Object.keys(req.body).length === 0) {
+        logger.info('[WhatsApp Flow] Health check received');
+        return res.status(200).json({
+          response: {
+            status: 'SUCCESS',
+            message: 'Health check successful',
+          },
+        });
       }
 
-      // Extract WhatsApp number from headers or context (if provided by Meta)
-      const from = req.headers['x-whatsapp-from'] || req.body.from; // Adjust based on Meta's headers
-      if (!from) {
-        console.log('[WhatsApp Flow] Missing WhatsApp number in payload');
-        logger.warn('Missing WhatsApp number in Flow payload');
-        return res.status(400).json({ success: false, message: 'Missing WhatsApp number' });
+      const { flow_token, screen, encrypted_flow_data, encrypted_flow_id, from } = req.body;
+
+      // Validate required fields
+      if (!flow_token || !screen || !encrypted_flow_data || !encrypted_flow_id || !from) {
+        logger.warn(`[WhatsApp Flow] Invalid payload: missing required fields`);
+        return res.status(400).json({
+          response: {
+            status: 'ERROR',
+            message: 'Invalid Flow payload: missing required fields',
+          },
+        });
       }
 
-      await WhatsAppService.handleFlowResponse(from, flow_token, screen, data);
-      console.log(`[WhatsApp Flow] Processed Flow response from ${from}, flow_token: ${flow_token}`);
-      res.status(200).json({ success: true });
+      if (screen === 'SIGN_UP') {
+        const decryptedData = await WhatsAppService.decryptFlowData(encrypted_flow_data, encrypted_flow_id);
+        // Validate phone matches WhatsApp number
+        if (decryptedData.phone !== from) {
+          logger.warn(`[WhatsApp Flow] Phone mismatch: ${decryptedData.phone} != ${from}`);
+          return res.status(400).json({
+            response: {
+              status: 'ERROR',
+              message: 'Phone number must match your WhatsApp number.',
+            },
+          });
+        }
+
+        // Process registration: Save to Supabase
+        try {
+          const hashedPassword = await bcrypt.hash(decryptedData.password, 10);
+          const hashedPin = await bcrypt.hash(decryptedData.pin, 10);
+
+          const newUser = await prisma.user.create({
+            data: {
+              firstName: decryptedData.firstName,
+              lastName: decryptedData.lastName,
+              email: decryptedData.email,
+              whatsappId: decryptedData.phone,
+              password: hashedPassword,
+              transactionPin: hashedPin,
+              termsAgreed: decryptedData.terms_agreement,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          });
+
+          logger.info(`[WhatsApp Flow] User registered: ${newUser.email}`);
+        } catch (dbError) {
+          logger.error(`[WhatsApp Flow] Database error: ${dbError.message}`);
+          return res.status(500).json({
+            response: {
+              status: 'ERROR',
+              message: 'Failed to register user',
+            },
+          });
+        }
+
+        return res.status(200).json({
+          response: {
+            status: 'SUCCESS',
+            message: `Registration successful! Welcome, ${decryptedData.firstName}.`,
+          },
+        });
+      }
+
+      // Default response for other screens or health checks
+      return res.status(200).json({
+        response: {
+          status: 'SUCCESS',
+          message: 'Flow request processed',
+        },
+      });
     } catch (error) {
-      console.log(`[WhatsApp Flow] Error: ${error.message}`);
-      logger.error(`Flow endpoint error: ${error.message}`);
-      res.status(500).json({ success: false, message: 'Flow endpoint error' });
+      logger.error(`[WhatsApp Flow] Error: ${error.message}`);
+      return res.status(500).json({
+        response: {
+          status: 'ERROR',
+          message: 'Internal server error',
+        },
+      });
     }
   }
 }
 
 export default WhatsAppController;
+
+
