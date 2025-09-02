@@ -198,6 +198,36 @@ class WhatsAppService {
     }
   }
 
+  static async decryptFlowData(encryptedFlowData, encryptedFlowId) {
+    try {
+      if (!process.env.WHATSAPP_FLOW_PRIVATE_KEY) {
+        throw new Error('WHATSAPP_FLOW_PRIVATE_KEY is not set in .env');
+      }
+
+      // Decode Base64-encoded private key
+      const privateKey = Buffer.from(process.env.WHATSAPP_FLOW_PRIVATE_KEY, 'base64').toString('utf8');
+      
+      // Decrypt encrypted_flow_data (assumes AES-256-GCM encryption)
+      const [iv, encrypted, authTag] = encryptedFlowData.split('.');
+      const decipher = crypto.createDecipheriv(
+        'aes-256-gcm',
+        crypto.createHash('sha256').update(privateKey).digest(),
+        Buffer.from(iv, 'base64')
+      );
+      decipher.setAuthTag(Buffer.from(authTag, 'base64'));
+      let decrypted = decipher.update(Buffer.from(encrypted, 'base64'));
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      
+      const decryptedData = JSON.parse(decrypted.toString('utf8'));
+      logger.info(`[WhatsApp Flow] Decrypted data: ${JSON.stringify(decryptedData, null, 2)}`);
+      
+      return decryptedData;
+    } catch (error) {
+      logger.error(`[WhatsApp Flow] Decryption error: ${error.message}`);
+      throw new Error(`Failed to decrypt flow data: ${error.message}`);
+    }
+  }
+
   static async sendMessage(to, message) {
     try {
       if (!process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_ACCESS_TOKEN) {
