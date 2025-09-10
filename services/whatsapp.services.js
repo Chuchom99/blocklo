@@ -156,12 +156,19 @@
 
 // export default WhatsAppService;
 
+
+
 import logger from '../config/logger.js';
 import { langchainService } from './ai.services.js';
 import prisma from '../config/prisma.js';
 import UserService from './user.service.js';
 import axios from 'axios';
-import fs from 'fs';
+import fs from "fs";
+import crypto from "crypto";  // Full module import first
+import { privateDecrypt, createDecipheriv, createCipheriv } from "crypto";   
+
+
+
 
 
 class WhatsAppService {
@@ -198,35 +205,181 @@ class WhatsAppService {
     }
   }
 
-  static async decryptFlowData(encryptedFlowData, encryptedFlowId) {
-    try {
-      if (!process.env.WHATSAPP_FLOW_PRIVATE_KEY) {
-        throw new Error('WHATSAPP_FLOW_PRIVATE_KEY is not set in .env');
-      }
 
-      // Decode Base64-encoded private key
-      const privateKey = Buffer.from(process.env.WHATSAPP_FLOW_PRIVATE_KEY, 'base64').toString('utf8');
+
+
+  //   static async decryptFlowData(encryptedFlowData, encryptedFlowId) {
+  //   try {
+  //     if (!process.env.WHATSAPP_FLOW_PRIVATE_KEY) {
+  //       throw new Error('WHATSAPP_FLOW_PRIVATE_KEY is not set in .env');
+  //     }
+
+  //     // Decode Base64-encoded private key
+  //     const privateKey = Buffer.from(process.env.WHATSAPP_FLOW_PRIVATE_KEY, 'base64').toString('utf8');
       
-      // Decrypt encrypted_flow_data (assumes AES-256-GCM encryption)
-      const [iv, encrypted, authTag] = encryptedFlowData.split('.');
-      const decipher = crypto.createDecipheriv(
-        'aes-256-gcm',
-        crypto.createHash('sha256').update(privateKey).digest(),
-        Buffer.from(iv, 'base64')
-      );
-      decipher.setAuthTag(Buffer.from(authTag, 'base64'));
-      let decrypted = decipher.update(Buffer.from(encrypted, 'base64'));
-      decrypted = Buffer.concat([decrypted, decipher.final()]);
+  //     // Validate encrypted_flow_data format
+  //     if (typeof encryptedFlowData !== 'string' || !encryptedFlowData.includes('.')) {
+  //       logger.warn(`[WhatsApp Flow] Invalid encrypted_flow_data format: ${encryptedFlowData}`);
+  //       throw new Error('Invalid encrypted_flow_data format');
+  //     }
+
+  //     const [iv, encrypted, authTag] = encryptedFlowData.split('.');
+  //     if (!iv || !encrypted || !authTag) {
+  //       logger.warn(`[WhatsApp Flow] Incomplete encrypted_flow_data components: iv=${iv}, encrypted=${encrypted}, authTag=${authTag}`);
+  //       throw new Error('Invalid encrypted_flow_data format');
+  //     }
+
+  //     // Validate encrypted_flow_id
+  //     if (encryptedFlowId !== process.env.WHATSAPP_REGISTRATION_FLOW_ID) {
+  //       logger.warn(`[WhatsApp Flow] Flow ID mismatch: ${encryptedFlowId} != ${process.env.WHATSAPP_REGISTRATION_FLOW_ID}`);
+  //       throw new Error('Invalid flow ID');
+  //     }
+
+  //     // Decrypt using AES-256-GCM
+  //     const key = createHash('sha256').update(privateKey).digest();
+  //     const decipher = createDecipheriv(
+  //       'aes-256-gcm',
+  //       key,
+  //       Buffer.from(iv, 'base64')
+  //     );
+  //     decipher.setAuthTag(Buffer.from(authTag, 'base64'));
+  //     let decrypted = decipher.update(Buffer.from(encrypted, 'base64'));
+  //     decrypted = Buffer.concat([decrypted, decipher.final()]);
       
-      const decryptedData = JSON.parse(decrypted.toString('utf8'));
-      logger.info(`[WhatsApp Flow] Decrypted data: ${JSON.stringify(decryptedData, null, 2)}`);
+  //     const decryptedData = JSON.parse(decrypted.toString('utf8'));
+  //     logger.info(`[WhatsApp Flow] Decrypted data: ${JSON.stringify(decryptedData, null, 2)}`);
       
-      return decryptedData;
-    } catch (error) {
-      logger.error(`[WhatsApp Flow] Decryption error: ${error.message}`);
-      throw new Error(`Failed to decrypt flow data: ${error.message}`);
+  //     return decryptedData;
+  //   } catch (error) {
+  //     logger.error(`[WhatsApp Flow] Decryption error: ${error.message}`);
+  //     throw new Error(`Failed to decrypt flow data: ${error.message}`);
+  //   }
+  // }
+
+static async decryptFlowData(encryptedFlowData, encryptedAesKey, initialVector) {
+  try {
+    // Load private key from PEM file (no .env fallback)
+    const privateKeyPem = fs.readFileSync("private_key.pem", "utf8").trim();
+    if (!privateKeyPem.startsWith('-----BEGIN PRIVATE KEY-----') && !privateKeyPem.startsWith('-----BEGIN RSA PRIVATE KEY-----')) {
+      throw new Error("Invalid private key format in private_key.pem: Must be PEM-encoded RSA key");
     }
+
+    // Check for constants availability
+    if (typeof crypto.constants === 'undefined') {
+      throw new Error("crypto.constants is undefined. Ensure 'import crypto from \"crypto\";' is at the top of the file.");
+    }
+
+    // Step 1: Base64 decode the inputs
+    const encryptedAesKeyBuffer = Buffer.from(encryptedAesKey, "base64");
+    const ivBuffer = Buffer.from(initialVector, "base64");
+    const encryptedDataBuffer = Buffer.from(encryptedFlowData, "base64");
+
+    if (encryptedAesKeyBuffer.length === 0 || ivBuffer.length !== 16 || encryptedDataBuffer.length < 16) {
+      throw new Error(`Invalid input buffer lengths: AES key ${encryptedAesKeyBuffer.length}, IV ${ivBuffer.length}, Data ${encryptedDataBuffer.length}`);
+    }
+
+    // Warn on suspiciously short data (like in your logs)
+    if (encryptedDataBuffer.length < 100) {
+      logger.warn(`[WhatsApp Flow] Suspiciously short encrypted_data (${encryptedDataBuffer.length} bytes) - may be stub or test payload`);
+    }
+
+    // Step 2: RSA decrypt the AES key (OAEP padding with SHA-256 MGF1)
+    const aesKeyBuffer = privateDecrypt(
+      {
+        key: privateKeyPem,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: "sha256",
+      },
+      encryptedAesKeyBuffer
+    );
+    if (aesKeyBuffer.length !== 16) {
+      throw new Error(`Invalid AES key length after decryption: ${aesKeyBuffer.length} (expected 16)`);
+    }
+
+    // Step 3: Extract auth tag (last 16 bytes) and ciphertext
+    const authTag = encryptedDataBuffer.slice(-16);
+    const ciphertext = encryptedDataBuffer.slice(0, -16);
+
+    // Step 4: AES-GCM decrypt
+    const decipher = createDecipheriv("aes-128-gcm", aesKeyBuffer, ivBuffer);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+
+    // Step 5: Parse JSON
+    const decryptedData = JSON.parse(decrypted.toString("utf8"));
+
+    // In Step 5, after JSON.parse:
+
+// Log the exact content (add this line)
+console.log(`[DEBUG] Exact decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);  // Or use logger
+
+logger.info(`[WhatsApp Flow] Raw decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);
+
+    // DEBUG: Always log the full raw decrypted JSON
+    logger.info(`[WhatsApp Flow] Raw decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);
+
+    // Validation as warnings (non-fatal for debugging)
+    if (decryptedData.action?.name !== "data_exchange") {
+      logger.warn(`[WhatsApp Flow] Unexpected or missing action: ${decryptedData.action?.name || 'undefined'}. Full payload: ${JSON.stringify(decryptedData)}`);
+    }
+
+    if (!decryptedData.screen || !decryptedData.data || !decryptedData.flow_token) {
+      logger.warn(`[WhatsApp Flow] Missing some expected fields (screen/data/flow_token). Available: screen=${decryptedData.screen}, hasData=${!!decryptedData.data}, hasToken=${!!decryptedData.flow_token}`);
+    }
+
+    // Return extracted fields (with fallbacks)
+    return {
+      screen: decryptedData.screen || 'UNKNOWN',
+      data: decryptedData.data || {},
+      flowToken: decryptedData.flow_token || 'unknown',
+      aesKey: aesKeyBuffer,  // For response encryption
+      iv: ivBuffer,  // For IV flipping in response
+      ...decryptedData
+    };
+  } catch (error) {
+    logger.error(`[WhatsApp Flow] Decryption error details: ${error.message}`);
+    if (error.message.includes('bad decrypt')) {
+      logger.error('Likely cause: Mismatched public/private key pair. Re-upload public key via uploadPublicKey().');
+    }
+    if (error.message.includes('decipher.final')) {
+      logger.error('Likely cause: Invalid AES key, IV, or auth tag (wrong key or tampered data).');
+    }
+    throw new Error(`Failed to decrypt flow data: ${error.message}`);
   }
+}
+
+// New method: Encrypt response (AES-GCM with same key, flipped IV)
+static encryptResponse(plaintextJson, aesKeyBuffer, ivBuffer) {
+  try {
+    // Step 1: Flip IV (bitwise NOT on each byte: ivFlipped[i] = 0xFF ^ iv[i])
+    const flippedIv = Buffer.alloc(ivBuffer.length);
+    for (let i = 0; i < ivBuffer.length; i++) {
+      flippedIv[i] = 0xFF ^ ivBuffer[i];
+    }
+
+    // Step 2: UTF-8 encode plaintext
+    const plaintextBuffer = Buffer.from(plaintextJson, "utf8");
+
+    // Step 3: AES-GCM encrypt (no random nonce/IV here—use flipped one)
+    const cipher = createCipheriv("aes-128-gcm", aesKeyBuffer, flippedIv);
+    let encrypted = cipher.update(plaintextBuffer);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    // Step 4: Concat ciphertext + authTag
+    const encryptedBuffer = Buffer.concat([encrypted, authTag]);
+
+    // Step 5: Base64 encode
+    const encryptedBase64 = encryptedBuffer.toString("base64");
+
+    logger.info(`[WhatsApp Flow] Encrypted response length: ${encryptedBase64.length}`);
+    return encryptedBase64;
+  } catch (error) {
+    logger.error(`[WhatsApp Flow] Encryption error: ${error.message}`);
+    throw new Error(`Failed to encrypt response: ${error.message}`);
+  }
+}
 
   static async sendMessage(to, message) {
     try {
@@ -377,6 +530,7 @@ class WhatsAppService {
       await this.sendMessage(from, 'Sorry, something went wrong. Please try again.');
     }
   }
+  
 
   static verifyWebhook(req) {
     const mode = req.query['hub.mode'];
@@ -395,3 +549,7 @@ class WhatsAppService {
 }
 
 export default WhatsAppService;
+
+
+
+

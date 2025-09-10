@@ -35,6 +35,17 @@ app.use("/api", whatsappRoutes)
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "WhatsApp Fintech API" });
 });
+app.get("/webhook", (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  return res.sendStatus(403);
+});
+
 
 // Error handling
 app.use((err, req, res, next) => {
