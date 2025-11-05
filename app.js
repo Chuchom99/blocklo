@@ -13,6 +13,8 @@ import walletRoutes from "./routes/wallet.routes.js";
 import psbRoutes from "./routes/psb.routes.js";
 import aiRoutes from "./routes/ai.routes.js";
 import whatsappRoutes from "./routes/whatsapp.routes.js"
+import webhookRoutes from "./routes/webhooks.js"
+import psbVasRoutes from "./routes/psb.vas.route.js";
 // import WhatsAppService from "./services/whatsapp.services.js"
 // WhatsAppService.uploadPublicKey();
 
@@ -30,6 +32,8 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/psb", psbRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api", whatsappRoutes)
+app.use("/webhook", webhookRoutes);
+app.use("/api/psb/vas", psbVasRoutes);
 
 // Health check
 app.get("/health", (req, res) => {

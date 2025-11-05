@@ -1,9 +1,8 @@
 import express from "express";
-import aiController from "../controllers/ai.controller.js"; 
+import { processAiMessage } from "../controllers/ai.controller.js";
 
-const router = express.Router()
+const router = express.Router();
 
-// AI Conversation
-router.post('/chat', aiController.chat);
+router.post("/message", processAiMessage);
 
 export default router;

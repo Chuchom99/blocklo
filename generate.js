@@ -1,0 +1,38 @@
+
+import crypto from 'crypto';
+// generate-signature.js
+
+
+// -------------------------------------------------
+// 1.  <-- EDIT THESE VALUES ONLY -->
+const BVN          = '22222222222';                     // test BVN
+const API_KEY      = 'BLOCKLO_TEST_FSILIT6GhDXlxwxyOR4T';             // from .env
+const SECRET_KEY   = 'oKityqjw296PPHpkP0JwytHYFKq1xkh3kRwDzGmM';         // from .env
+// -------------------------------------------------
+
+// 2. Build payload that is **signed** (timestamp is required for the HMAC)
+const timestamp   = new Date().toISOString();
+const signPayload = { bvn: BVN, timestamp };
+
+// 3. Sort keys alphabetically (9PSB requirement)
+const sorted = Object.keys(signPayload)
+  .sort()
+  .reduce((obj, k) => ({ ...obj, [k]: signPayload[k] }), {});
+
+// 4. Stringify → HMAC-SHA256
+const data      = JSON.stringify(sorted);
+const signature = crypto
+  .createHmac('sha256', SECRET_KEY)
+  .update(data)
+  .digest('hex');
+
+console.log('=== 9PSB BVN SIGNATURE ===');
+console.log('Timestamp   :', timestamp);
+console.log('Signed JSON :', data);
+console.log('X-Signature :', signature);
+console.log('\n--- cURL test (copy-paste) ---');
+console.log(`curl -X POST https://api.9psb.com.ng/vas/kyc/verify-bvn \\
+  -H "Authorization: Bearer ${API_KEY}" \\
+  -H "X-Signature: ${signature}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"bvn":"${BVN}"}'`);

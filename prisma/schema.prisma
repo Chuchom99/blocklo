@@ -5,47 +5,72 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")    
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
-  phone         String   @unique
-  password      String?
-  transactionPin String?
-  firstName     String
-  lastName      String
-  whatsappId    String?  @unique
-  telegramId    String?  @unique
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  termsAgreed   Boolean
-  kyc           KYC[]
-  accounts      Account[]
-  transactions  Transaction[]
+  id              String   @id @default(uuid())
+  email           String   @unique
+  phone           String   @unique
+  password        String?
+  transactionPin  String?
+  firstName       String
+  lastName        String
+  otherNames      String?  // 9PSB uses 'otherNames' instead of middleName
+  gender          Int?     // 0 = Male, 1 = Female
+  dateOfBirth     String?  // "dd/MM/yyyy" (store as string since 9PSB expects this format)
+  address         String?
+  placeOfBirth    String?
+  bvn             String?  @unique
+  nin             String?  @unique
+  ninUserId       String?  @unique
+  nationalIdentityNo String? @unique
+  nextOfKinName   String?
+  nextOfKinPhone  String?
+  referralName    String?
+  referralPhone   String?
+  whatsappId      String?  @unique
+  telegramId      String?  @unique
+  termsAgreed     Boolean
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  kyc             KYC[]
+  accounts        Account[]
+  transactions    Transaction[]
 }
 
+
 model KYC {
-  id        String    @id @default(uuid())
-  userId    String
-  bvn       String    @unique
-  status    KYCStatus @default(PENDING)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  user      User      @relation(fields: [userId], references: [id])
+  id             String    @id @default(uuid())
+  userId         String
+  bvn            String?   @unique
+  nin            String?   @unique
+  verificationId String?   // 9PSB reference or internal verification token
+  status         KYCStatus @default(PENDING)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id])
 }
+
 
 model Account {
   id            String       @id @default(uuid())
   userId        String
   accountNumber String       @unique
+  accountName   String?
+  provider      String       @default("9PSB")
   balance       Float        @default(0.0)
   currency      String       @default("NGN")
+  status        String       @default("ACTIVE")
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+
   user          User         @relation(fields: [userId], references: [id])
   transactions  Transaction[]
 }
+
 
 model Transaction {
   id            String          @id @default(uuid())
@@ -54,6 +79,8 @@ model Transaction {
   amount        Float
   type          TransactionType
   reference     String          @unique
+    status      String   @default("PENDING") 
+  metadata    Json?                       //  new field to store PSB response
   createdAt     DateTime        @default(now())
   user          User            @relation(fields: [userId], references: [id])
   account       Account         @relation(fields: [accountId], references: [id])

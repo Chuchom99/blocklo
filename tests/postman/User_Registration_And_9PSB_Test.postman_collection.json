@@ -1,0 +1,68 @@
+{
+  "info": {
+    "name": "User Registration + 9PSB Wallet Test",
+    "_postman_id": "e6e64b57-4f84-4e37-8e6e-541c8d8c126f",
+    "description": "Manual testing for user registration and 9PSB wallet creation flow",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register User - Backend API",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"phone\": \"08012345678\",\n  \"password\": \"StrongPass123\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"pin\": \"1234\",\n  \"whatsappId\": \"+2348012345678\",\n  \"termsAgreed\": true\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/users/register",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "users", "register"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create Wallet - 9PSB Direct",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Basic {{psb_auth}}", "type": "text" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"transactionTrackingRef\": \"9PSB-TEST-001\",\n  \"lastName\": \"Doe\",\n  \"otherNames\": \"John\",\n  \"accountName\": \"John Doe\",\n  \"phoneNo\": \"08012345678\",\n  \"gender\": 0,\n  \"dateOfBirth\": \"15/06/1995\",\n  \"address\": \"12 Adeola Odeku Street, Victoria Island, Lagos\",\n  \"placeOfBirth\": \"Lagos\",\n  \"bvn\": \"22345678901\",\n  \"nin\": \"12345678901\",\n  \"ninUserId\": \"99887766554\",\n  \"nationalIdentityNo\": \"12345678901\",\n  \"nextOfKinName\": \"Jane Doe\",\n  \"nextOfKinPhoneNo\": \"08123456789\",\n  \"referralName\": \"Mike\",\n  \"referralPhoneNo\": \"08098765432\",\n  \"email\": \"john.doe@example.com\",\n  \"otherAccountInformation\": \"Registered via API Integration\"\n}"
+        },
+        "url": {
+          "raw": "http://102.216.128.75:9090/waas/api/v1/open_wallet",
+          "protocol": "http",
+          "host": ["102", "216", "128", "75:9090"],
+          "path": ["waas", "api", "v1", "open_wallet"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "// Generate Basic Auth automatically",
+          "if (pm.environment.get('psb_username') && pm.environment.get('psb_password')) {",
+          "  const creds = pm.environment.get('psb_username') + ':' + pm.environment.get('psb_password');",
+          "  const encoded = btoa(creds);",
+          "  pm.environment.set('psb_auth', encoded);",
+          "}"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ]
+}
