@@ -74,56 +74,43 @@ export async function handleTransfer(from, message, userId) {
 /**
  * Fetch user wallet balance — always from live 9PSB
  */
+
 export async function handleBalance(userId) {
-  if (!userId) return "⚠️ Please register first.";
-
   try {
+    if (!userId) return "Please register first.";
+
     const account = await prisma.account.findFirst({ where: { userId } });
-    if (!account) return "⚠️ No wallet found.";
+    if (!account) return "No wallet found.";
 
-    // 1️⃣ Always hit 9PSB wallet enquiry
-    const walletData = await PsbService.walletEnquiry(account.accountNumber); // <-- FIXED
+    const accountNo = account.accountNumber || account.accountNo;
+    if (!accountNo) return "Your wallet is not yet linked. Please contact support.";
 
-    // 2️⃣ Validate 9PSB response
-    const isSuccess =
-      walletData?.isSuccessful === true ||
-      walletData?.responseCode === "00" ||
-      walletData?.status?.toUpperCase?.() === "SUCCESS" ||
-      walletData?.responseDescription?.toLowerCase?.() === "successful";
+    const walletData = await PsbService.walletEnquiry(accountNo);
 
-    if (!isSuccess) {
-      logger.warn(
-        `⚠️ 9PSB wallet enquiry failed for ${account.accountNumber}: ${
-          walletData?.responseDescription || "Unknown error"
-        }`
-      );
-      return `❌ Could not fetch live balance — ${
-        walletData?.responseDescription || "Please try again later."
-      }`;
+    // If PSB returns an error response, do NOT throw
+    if (walletData?.responseCode && walletData.responseCode !== "00") {
+      logger.warn(`[handleBalance] Non-success response: ${walletData.responseCode}`);
     }
 
-    const balance = walletData.availableBalance ?? 0;
+    const balance =
+      walletData?.data?.data?.availableBalance ??
+      walletData?.data?.availableBalance ??
+      walletData?.availableBalance ??
+      0;
 
-    // 3️⃣ Sync DB balance for consistency
-    await prisma.account.update({
-      where: { id: account.id },
-      data: { balance },
+    const formatted = parseFloat(balance).toLocaleString("en-NG", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     });
 
-    logger.info(
-      `✅ Live 9PSB balance for ${account.accountNumber}: ₦${balance}`
-    );
-    return `💰 Your current wallet balance is ₦${balance.toLocaleString(
-      "en-NG",
-      {
-        minimumFractionDigits: 2,
-      }
-    )}`;
-  } catch (error) {
-    logger.error(`9PSB balance enquiry error: ${error.message}`);
-    return `❌ Could not fetch balance: ${error.message}`;
+    return `💰 Your wallet balance is ₦${formatted}`;
+  } catch (err) {
+    logger.error(`[handleBalance] Error: ${err.message}`);
+    return "⚠️ Could not fetch your wallet balance at the moment.";
   }
 }
+
+
 
 export async function handleTransactionHistory(userId) {
   if (!userId) return "⚠️ Please register first.";
@@ -246,3 +233,4 @@ export async function handleKycStatus(userId) {
     return `❌ Could not retrieve KYC status: ${error.message}`;
   }
 }
+

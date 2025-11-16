@@ -134,8 +134,8 @@ static async buyAirtime({ userId, accountId, phoneNumber, amount }) {
   if (!account) throw new Error("Account not found");
 
   const numericAmount = parseFloat(amount);
-  if (account.balance < numericAmount)
-    throw new Error("Insufficient balance");
+  // if (account.balance < numericAmount)
+  //   throw new Error("Insufficient balance");
 
   const transactionReference = uuidv4().replace(/-/g, "").slice(0, 18);
 
@@ -202,7 +202,7 @@ static async buyData({ userId, accountId, phoneNumber, productId, amount }) {
   // 🧾 Find debit account
   const account = await prisma.account.findUnique({ where: { id: accountId } });
   if (!account) throw new Error("Account not found");
-  if (account.balance < amountValue) throw new Error("Insufficient balance");
+  // if (account.balance < amountValue) throw new Error("Insufficient balance");
 
   const transactionReference = uuidv4().replace(/-/g, "").slice(0, 18);
 
@@ -326,8 +326,8 @@ static detectNetwork(phone) {
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount)) throw new Error("Invalid amount format");
 
-    if (account.balance < numericAmount)
-      throw new Error("Insufficient balance");
+    // if (account.balance < numericAmount)
+    //   throw new Error("Insufficient balance");
 
     const transactionReference = uuidv4().replace(/-/g, "").slice(0, 18);
 

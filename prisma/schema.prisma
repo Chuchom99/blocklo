@@ -39,6 +39,7 @@ model User {
   kyc             KYC[]
   accounts        Account[]
   transactions    Transaction[]
+  beneficiaries   Beneficiary[]
 }
 
 
@@ -84,6 +85,22 @@ model Transaction {
   createdAt     DateTime        @default(now())
   user          User            @relation(fields: [userId], references: [id])
   account       Account         @relation(fields: [accountId], references: [id])
+}
+
+model Beneficiary {
+  id           String   @id @default(uuid())
+  userId       String
+  alias        String   // "babe", "mom", "john"
+  accountNo    String
+  bankCode     String   // "058" for GTBank
+  bankName     String   // "GTBank Plc"
+  accountName  String   // validated name from 9PSB
+  isValidated  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user          User            @relation(fields: [userId], references: [id])
+
+  @@unique([userId, alias]) // one alias per user
 }
 
 enum KYCStatus {

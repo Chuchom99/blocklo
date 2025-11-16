@@ -153,52 +153,66 @@ class PsbService {
   }
 
   // Add this method inside PsbService class
-  static async walletEnquiry(accountNo) {
-    try {
-      // 1️⃣ Get WAAS token
-      const token = await this.getWAASAuthToken();
-      if (!token) throw new Error("Failed to obtain WAAS token");
-
-      // 2️⃣ Construct payload
-      const payload = {
-        accountNo,
-      };
-
-      // 3️⃣ Send request with Bearer token
-      const response = await axios.post(
-        `${PSB_BASE_URL}/wallet_enquiry`,
-        payload,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          timeout: 10000,
-        }
-      );
-
-      const data = response.data;
-      if (!data) throw new Error("Empty response from 9PSB");
-
-      if (data.status?.toLowerCase() !== "success") {
-        throw new Error(
-          `Wallet enquiry failed: ${data.message || "Unknown error"}`
-        );
-      }
-
-      logger.info(`Wallet enquiry successful for ${accountNo}`);
-      return data.data; // returns wallet details including balance
-    } catch (error) {
-      const status = error.response?.status;
-      const detail = error.response?.data || error.message;
-      logger.error(
-        `Error performing wallet enquiry for ${accountNo} [${
-          status || "no status"
-        }]: ${JSON.stringify(detail)}`
-      );
-      throw new Error(`Wallet enquiry failed: ${error.message}`);
-    }
+static async walletEnquiry(accountNo) {
+  let token;
+  try {
+    token = await this.getWAASAuthToken();
+    if (!token) throw new Error("No WAAS token retrieved");
+  } catch (e) {
+    logger.error(`[PSB] Auth error for walletEnquiry: ${e.message}`);
+    return {
+      status: 'failed',
+      responseCode: '401',
+      responseDescription: 'Auth failed',
+      availableBalance: 0,
+    };
   }
+
+  const url = `${PSB_BASE_URL}/wallet_enquiry`;
+  const payload = { accountNo };
+
+  logger.info(`[PSB] → Requesting walletEnquiry for ${accountNo}`);
+  logger.debug(`[PSB] URL: ${url}`);
+  logger.debug(`[PSB] Payload: ${JSON.stringify(payload)}`);
+
+  try {
+    const { data } = await axios.post(url, payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      timeout: 10000,
+    });
+
+    // ✅ Log the entire response
+    logger.info(`[PSB] ← walletEnquiry response (${accountNo}): ${JSON.stringify(data, null, 2)}`);
+
+    return data;
+  } catch (error) {
+    const resp = error.response?.data || {};
+    const statusCode = error.response?.status || 'unknown';
+    const responseCode = resp?.responseCode || resp?.data?.responseCode || 'ERR';
+    const description =
+      resp?.responseDescription ||
+      resp?.data?.responseDescription ||
+      resp?.message ||
+      error.message;
+
+    // 🔥 Log everything about the failure
+    logger.error(`[PSB] walletEnquiry failed [${statusCode}/${responseCode}] for ${accountNo}: ${description}`);
+    logger.debug(`[PSB] Raw error data: ${JSON.stringify(resp, null, 2)}`);
+
+    return {
+      status: 'failed',
+      responseCode,
+      responseDescription: description,
+      availableBalance: resp?.data?.availableBalance ?? resp?.availableBalance ?? 0,
+      raw: resp,
+    };
+  }
+}
+
+
 
   /**
    * Transfer funds between Wallet and Client Float Account
@@ -209,152 +223,153 @@ class PsbService {
    * @param {"debit"|"credit"} type Type of transaction
    */
   static async singleWalletTransfer(
-  accountNo,
-  totalAmount,
-  narration,
-  merchant,
-  type = "debit"
-) {
-  try {
-    if (!accountNo || !totalAmount || !narration || !merchant)
-      throw new Error("Missing required fields for wallet transfer");
-
-    const transactionId = uuidv4().replace(/-/g, "").substring(0, 25);
-    const merchantPayload = {
-      isFee: merchant.isFee,
-      merchantFeeAmount: merchant.merchantFeeAmount || "0",
-      merchantFeeAccount: merchant.merchantFeeAccount || "0000000000",
-    };
-
-    const payload = {
-      accountNo,
-      totalAmount: String(totalAmount),
-      transactionId,
-      narration,
-      merchant: merchantPayload,
-    };
-
-    const url =
-      type.toLowerCase() === "debit"
-        ? `${PSB_BASE_URL}/debit/transfer`
-        : `${PSB_BASE_URL}/credit/transfer`;
-
-    let result;
+    accountNo,
+    totalAmount,
+    narration,
+    merchant,
+    type = "debit"
+  ) {
     try {
-      // 1️⃣ Try WAAS
-      const token = await this.getWAASAuthToken();
-      logger.info(
-        `Initiating ${type.toUpperCase()} transfer [WAAS] → ${JSON.stringify(payload)}`
-      );
+      if (!accountNo || !totalAmount || !narration || !merchant)
+        throw new Error("Missing required fields for wallet transfer");
 
-      const response = await axios.post(url, payload, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        timeout: 40000,
-      });
+      const transactionId = uuidv4().replace(/-/g, "").substring(0, 25);
+      const merchantPayload = {
+        isFee: merchant.isFee,
+        merchantFeeAmount: merchant.merchantFeeAmount || "0",
+        merchantFeeAccount: merchant.merchantFeeAccount || "0000000000",
+      };
 
-      result = response.data;
-    } catch (waasError) {
-      logger.warn(`WAAS ${type} transfer failed → ${waasError.message}`);
+      const payload = {
+        accountNo,
+        totalAmount: String(totalAmount),
+        transactionId,
+        narration,
+        merchant: merchantPayload,
+      };
 
-      // 2️⃣ Retry using VAS
-      const signature = this.generateSignature(
-        payload,
-        process.env.PSB_VAS_SECRET_KEY
-      );
+      const url =
+        type.toLowerCase() === "debit"
+          ? `${PSB_BASE_URL}/debit/transfer`
+          : `${PSB_BASE_URL}/credit/transfer`;
 
-      logger.info(`Retrying ${type.toUpperCase()} transfer [VAS]`);
-      const vasResponse = await axios.post(url, payload, {
-        headers: {
-          "Content-Type": "application/json",
-          "X-Signature": signature,
-          apiKey: process.env.PSB_VAS_API_KEY,
-        },
-        timeout: 40000,
-      });
+      let result;
+      try {
+        // 1️⃣ Try WAAS
+        const token = await this.getWAASAuthToken();
+        logger.info(
+          `Initiating ${type.toUpperCase()} transfer [WAAS] → ${JSON.stringify(
+            payload
+          )}`
+        );
 
-      result = vasResponse.data;
-    }
-
-    logger.info(
-      `Wallet ${type} transfer for ${accountNo}: ${result.status} (${result.message})`
-    );
-
-    // 🧾 Fetch account and user info
-    const account = await prisma.account.findUnique({
-      where: { accountNumber: accountNo },
-    });
-    if (!account) throw new Error(`Account not found: ${accountNo}`);
-
-    const amount = parseFloat(totalAmount);
-
-    // ✅ Check if transaction is successful
-    const isSuccess =
-      result?.data?.isSuccessful === true ||
-      result?.data?.status?.toUpperCase?.() === "SUCCESS" ||
-      result?.data?.responseCode === "00";
-
-    const transactionStatus = isSuccess ? "SUCCESS" : "FAILED";
-
-    // 💾 Store transaction and update balance
-    await prisma.$transaction(async (tx) => {
-      // Always record the transaction with correct status
-      await tx.transaction.create({
-        data: {
-          userId: account.userId,
-          accountId: account.id,
-          amount,
-          type: type.toUpperCase(),
-          reference: transactionId,
-          status: transactionStatus, // 👈 Add this column to schema if not yet present
-          metadata: result.data ? JSON.stringify(result.data) : null,
-        },
-      });
-
-      // ✅ Only update balance when success
-      if (isSuccess) {
-        const newBalance =
-          type.toLowerCase() === "debit"
-            ? account.balance - amount
-            : account.balance + amount;
-
-        await tx.account.update({
-          where: { id: account.id },
-          data: { balance: newBalance },
+        const response = await axios.post(url, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          timeout: 40000,
         });
 
-        logger.info(
-          `💰 Account ${accountNo} balance updated: ₦${account.balance} → ₦${newBalance}`
+        result = response.data;
+      } catch (waasError) {
+        logger.warn(`WAAS ${type} transfer failed → ${waasError.message}`);
+
+        // 2️⃣ Retry using VAS
+        const signature = this.generateSignature(
+          payload,
+          process.env.PSB_VAS_SECRET_KEY
         );
-      } else {
-        logger.warn(
-          `⚠️ Transaction failed, balance not updated for ${accountNo}`
-        );
+
+        logger.info(`Retrying ${type.toUpperCase()} transfer [VAS]`);
+        const vasResponse = await axios.post(url, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            "X-Signature": signature,
+            apiKey: process.env.PSB_VAS_API_KEY,
+          },
+          timeout: 40000,
+        });
+
+        result = vasResponse.data;
       }
-    });
 
-    // 🎯 Return clear structured response
-    return {
-      success: isSuccess,
-      message: isSuccess
-        ? "Wallet transfer successful"
-        : result?.data?.message || "Transaction failed",
-      data: result?.data,
-    };
-  } catch (error) {
-    const status = error.response?.status;
-    const detail = error.response?.data || error.message;
-    logger.error(
-      `Error performing wallet ${type} transfer for ${accountNo} [${
-        status || "no status"
-      }]: ${JSON.stringify(detail)}`
-    );
-    throw new Error(`Wallet ${type} transfer failed: ${error.message}`);
+      logger.info(
+        `Wallet ${type} transfer for ${accountNo}: ${result.status} (${result.message})`
+      );
+
+      // 🧾 Fetch account and user info
+      const account = await prisma.account.findUnique({
+        where: { accountNumber: accountNo },
+      });
+      if (!account) throw new Error(`Account not found: ${accountNo}`);
+
+      const amount = parseFloat(totalAmount);
+
+      // ✅ Check if transaction is successful
+      const isSuccess =
+        result?.data?.isSuccessful === true ||
+        result?.data?.status?.toUpperCase?.() === "SUCCESS" ||
+        result?.data?.responseCode === "00";
+
+      const transactionStatus = isSuccess ? "SUCCESS" : "FAILED";
+
+      // 💾 Store transaction and update balance
+      await prisma.$transaction(async (tx) => {
+        // Always record the transaction with correct status
+        await tx.transaction.create({
+          data: {
+            userId: account.userId,
+            accountId: account.id,
+            amount,
+            type: type.toUpperCase(),
+            reference: transactionId,
+            status: transactionStatus, // 👈 Add this column to schema if not yet present
+            metadata: result.data ? JSON.stringify(result.data) : null,
+          },
+        });
+
+        // ✅ Only update balance when success
+        if (isSuccess) {
+          const newBalance =
+            type.toLowerCase() === "debit"
+              ? account.balance - amount
+              : account.balance + amount;
+
+          await tx.account.update({
+            where: { id: account.id },
+            data: { balance: newBalance },
+          });
+
+          logger.info(
+            `💰 Account ${accountNo} balance updated: ₦${account.balance} → ₦${newBalance}`
+          );
+        } else {
+          logger.warn(
+            `⚠️ Transaction failed, balance not updated for ${accountNo}`
+          );
+        }
+      });
+
+      // 🎯 Return clear structured response
+      return {
+        success: isSuccess,
+        message: isSuccess
+          ? "Wallet transfer successful"
+          : result?.data?.message || "Transaction failed",
+        data: result?.data,
+      };
+    } catch (error) {
+      const status = error.response?.status;
+      const detail = error.response?.data || error.message;
+      logger.error(
+        `Error performing wallet ${type} transfer for ${accountNo} [${
+          status || "no status"
+        }]: ${JSON.stringify(detail)}`
+      );
+      throw new Error(`Wallet ${type} transfer failed: ${error.message}`);
+    }
   }
-}
-
 
   /**
    * Fetch wallet transaction history
@@ -497,6 +512,7 @@ class PsbService {
     destinationBankCode,
     destinationName,
     merchant,
+    senderName,
   }) {
     try {
       if (
@@ -512,11 +528,11 @@ class PsbService {
         );
       }
 
-      const transactionRef = uuidv4();
-      const orderRef = uuidv4();
+      const transactionRef = uuidv4().replace(/-/g, "").slice(0, 18);
+      const orderRef = uuidv4().replace(/-/g, "").slice(0, 18);
 
       const payload = {
-        transaction: { externalreference: transactionRef },
+        transaction: { reference: transactionRef }, // ✅ fixed key
         order: {
           amount: String(amount),
           status: "PENDING",
@@ -527,7 +543,7 @@ class PsbService {
         customer: {
           account: {
             number: accountNo,
-            bank: "9PSB",
+            bank: "999", // internal 9PSB code
             type: "WALLET",
           },
         },
@@ -538,13 +554,19 @@ class PsbService {
         },
         transactionType: "OTHER_BANKS",
         narration,
-        // Additional fields inferred from docs/sample
+        description: narration, // required
+        senderAccountNumber: accountNo,
         beneficiaryAccountNumber: destinationAccount,
         beneficiaryBankCode: destinationBankCode,
         beneficiaryName: destinationName || "",
+        name: senderName || "Wallet User",
       };
 
       const token = await this.getWAASAuthToken();
+      logger.info(
+        `[9PSB] Wallet→OtherBanks Payload: ${JSON.stringify(payload, null, 2)}`
+      );
+
       const response = await axios.post(
         `${PSB_BASE_URL}/wallet_other_banks`,
         payload,
@@ -559,23 +581,21 @@ class PsbService {
 
       const data = response.data;
       if (!data) throw new Error("Empty response from 9PSB");
-      if (data.status?.toUpperCase() !== "SUCCESS") {
+      if (data.status?.toUpperCase() !== "SUCCESS" && data.success !== true) {
         throw new Error(
-          `Wallet to other banks failed: ${
-            data.message || data.responseCode || "Unknown error"
-          }`
+          `Wallet to other banks failed: ${data.message || "Unknown error"}`
         );
       }
 
       logger.info(
-        `Wallet to other banks transfer initiated: ${transactionRef}`
+        `✅ Wallet to other banks transfer successful [${transactionRef}]`
       );
       return data;
     } catch (error) {
       const status = error.response?.status;
       const detail = error.response?.data || error.message;
       logger.error(
-        `Error wallet to other banks [${
+        `❌ Error wallet to other banks [${
           status || "no status"
         }]: ${JSON.stringify(detail)}`
       );
@@ -862,67 +882,3 @@ class PsbService {
 }
 
 export default PsbService;
-
-export async function handleWalletCredit(req, res) {
-  const { userId, amount, reference } = req.body;
-
-  try {
-    const account = await prisma.account.findFirst({ where: { userId } });
-    if (!account) return res.status(404).json({ error: "No wallet" });
-
-    // Call 9PSB credit API
-    const creditRes = await PsbService.walletCredit({
-      accountNumber: account.accountNumber,
-      amount,
-      reference,
-    });
-
-    const apiData = creditRes?.data;
-
-    // CRITICAL: Check nested status, NOT top-level success
-    const isSuccess =
-      apiData?.status === "success" && apiData?.data?.responseCode === "00";
-
-    if (isSuccess) {
-      // Only update DB if 9PSB says success
-      const newBalance = (account.balance ?? 0) + amount;
-
-      await prisma.account.update({
-        where: { id: account.id },
-        data: { balance: newBalance },
-      });
-
-      // Record transaction
-      await prisma.transaction.create({
-        data: {
-          userId,
-          accountId: account.id,
-          amount,
-          type: "CREDIT",
-          reference,
-        },
-      });
-
-      return res.json({
-        success: true,
-        message: "Wallet credited successfully",
-        balance: newBalance,
-      });
-    } else {
-      // Log failure reason
-      logger.warn(`Wallet credit failed for ${account.accountNumber}:`, {
-        responseCode: apiData?.data?.responseCode,
-        message: apiData?.message,
-      });
-
-      return res.status(400).json({
-        success: false,
-        message: apiData?.message || "Transaction failed",
-        responseCode: apiData?.data?.responseCode,
-      });
-    }
-  } catch (error) {
-    logger.error("Credit error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-}

@@ -1,156 +1,1404 @@
-
-// import axios from 'axios';
-// import logger from '../config/logger.js';
-// import { langchainService } from './ai.services.js';
-// import prisma from '../config/prisma.js';
-// import UserService from './user.service.js';
+// flow whatsapp service
+// import fs from "fs";
+// import axios from "axios";
+// import crypto from "crypto";
+// import prisma from "../config/prisma.js";
+// import logger from "../config/logger.js";
+// import UserService from "./user.service.js";
+// import { langchainService } from "./ai.services.js";
+// import { transcribeVoice } from "./ai.whisper.js";
+// import redis from "../config/redis.js";
 
 // class WhatsAppService {
-//   static async sendMessage(to, message) {
+//   // === SEND TEXT MESSAGE ===
+//   static async sendMessage(to, text) {
 //     try {
-//       if (!process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_ACCESS_TOKEN) {
-//         throw new Error('Missing WhatsApp configuration');
-//       }
-
-//       const response = await axios.post(
-//         `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
 //         {
-//           messaging_product: 'whatsapp',
+//           messaging_product: "whatsapp",
 //           to,
-//           type: 'text',
-//           text: { body: message },
+//           type: "text",
+//           text: { body: text },
 //         },
 //         {
 //           headers: {
 //             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-//             'Content-Type': 'application/json',
+//             "Content-Type": "application/json",
 //           },
 //         }
 //       );
-//       logger.info(`Message sent to ${to}: ${message}`);
-//       return response.data;
-//     } catch (error) {
-//       logger.error(`Error sending WhatsApp message to ${to}: ${error.response?.data?.error?.message || error.message}`);
-//       throw new Error(`Failed to send message: ${error.message}`);
+//       logger.info(`[WhatsApp → ${to}] ${text}`);
+//     } catch (err) {
+//       logger.error(
+//         `[WhatsApp Send Failed] ${err.response?.data || err.message}`
+//       );
 //     }
 //   }
 
-//   static async sendRegistrationFlow(to, flowId, flowToken) {
-//     try {
-//       const response = await axios.post(
-//         `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-//         {
-//           messaging_product: 'whatsapp',
-//           to,
-//           type: 'interactive',
-//           interactive: {
-//             type: 'flow',
-//             action: {
-//               name: 'flow',
-//               parameters: {
-//                 flow_id: flowId,
-//                 flow_token: flowToken,
-//                 flow_action: 'data_exchange',
-//                 flow_cta: 'Register or Sign In',
-//                 whatsapp_number: to, // Pass WhatsApp number to pre-fill phone field
-//               },
-//             },
+//   // === SEND FLOW (SIGNUP / LOGIN) ===
+//   static async sendFlow(to, flowId, flowToken = "unused") {
+//     const payload = {
+//       messaging_product: "whatsapp",
+//       to,
+//       type: "interactive",
+//       interactive: {
+//         type: "flow",
+//         header: { type: "text", text: "Welcome to Blocklo" },
+//         body: { text: "Create your account in seconds." },
+//         action: {
+//           name: "flow",
+//           parameters: {
+//             flow_message_version: "3",
+//             flow_id: flowId,
+//             flow_token: flowToken,
+//             mode: "draft", // or "published"
 //           },
 //         },
+//       },
+//     };
+
+//     await this.sendInteractive(payload);
+//   }
+
+//   static async sendInteractive(payload) {
+//     try {
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         payload,
 //         {
 //           headers: {
 //             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-//             'Content-Type': 'application/json',
 //           },
 //         }
 //       );
-//       logger.info(`Flow sent to ${to}: Flow ID ${flowId}`);
-//       return response.data;
-//     } catch (error) {
-//       logger.error(`Error sending Flow to ${to}: ${error.response?.data?.error?.message || error.message}`);
-//       throw new Error(`Failed to send Flow: ${error.message}`);
+//     } catch (err) {
+//       logger.error(`[Flow Send Failed] ${err.response?.data || err.message}`);
 //     }
 //   }
 
-//   static async handleIncomingMessage(from, message, messageId) {
+//   // === HANDLE INCOMING MESSAGE (TEXT + VOICE) ===
+//   static async handleIncomingMessage(
+//     from,
+//     message,
+//     messageId,
+//     profileName = "User"
+//   ) {
 //     try {
-//       // Map WhatsApp ID to user
 //       let user = await prisma.user.findUnique({ where: { whatsappId: from } });
-//       const userId = user ? user.id : null;
 
-//       logger.info(`Received message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)}`);
+//       // === NEW USER → ONBOARDING FLOW ===
+//       // === UNREGISTERED USER → LET AI ANSWER + OFFER SIGNUP ===
+//       if (!user) {
+//         let text = "";
 
-//       // Handle Flow response
-//       if (typeof message === 'object' && message.type === 'interactive' && message.interactive?.type === 'flow') {
-//         const flowData = message.interactive.flow_response?.data;
-//         const screen = message.interactive.flow_response?.screen;
-
-//         if (screen === 'SIGN_UP' && flowData) {
-//           const { firstName, lastName, email, phone, password, pin, terms_agreement } = flowData;
-//           if (!terms_agreement) {
-//             await this.sendMessage(from, 'You must agree to the terms and conditions to register.');
-//             return;
+//         if (message.type === "text") {
+//           text = message.text.body.trim();
+//         } else if (message.type === "audio" || message.type === "voice") {
+//           const mediaId = message.audio?.id || message.voice?.id;
+//           if (mediaId) {
+//             await this.sendMessage(from, "Listening to your voice note...");
+//             const mediaUrl = await this.getMediaUrl(mediaId);
+//             text = await transcribeVoice(mediaUrl);
+//             await this.sendMessage(from, `Heard: "${text}"`);
 //           }
-//           if (phone !== from) {
-//             await this.sendMessage(from, 'Phone number must match your WhatsApp number.');
-//             return;
-//           }
+//         }
 
-//           const newUser = await UserService.createUser({
-//             email,
-//             phone,
-//             firstName,
-//             lastName,
-//             password,
-//             pin,
-//             whatsappId: phone, // Use phone as whatsappId
-//           });
-
-//           await this.sendMessage(from, `Registration successful! Welcome, ${firstName}.`);
-//           logger.info(`User registered via Flow from ${from}: ${email}`);
-//           return;
-//         } else if (screen === 'SIGN_IN' && flowData) {
-//           const { identifier, password } = flowData;
-//           const user = await UserService.findByIdentifier(identifier);
-//           if (!user) {
-//             await this.sendMessage(from, 'User not found. Please register first.');
-//             return;
-//           }
-
-//           const valid = await UserService.verifyPassword(user.id, password);
-//           if (!valid) {
-//             await this.sendMessage(from, 'Invalid credentials. Please try again.');
-//             return;
-//           }
-
-//           await this.sendMessage(from, `Login successful! Welcome back, ${user.firstName}.`);
-//           logger.info(`User logged in via Flow from ${from}: ${identifier}`);
+//         if (!text) {
+//           await this.sendMessage(
+//             from,
+//             "I didn't catch that. Say hi or ask what I can do!"
+//           );
 //           return;
 //         }
+
+//         // LET AI ANSWER FIRST
+//         const aiReply = await langchainService.processMessage(
+//           from,
+//           text,
+//           null // userId = null → your AI should handle unregistered gracefully
+//         );
+
+//         await this.sendMessage(from, aiReply);
+
+//         // AFTER AI replies → gently offer signup (only once per session)
+//         const hasSeenWelcome = await redis.get(`welcome:${from}`);
+//         if (!hasSeenWelcome) {
+//           setTimeout(async () => {
+//             await this.sendMessage(
+//               from,
+//               "\n\nReady to start banking with voice & text?\nTap below to create your account in 30 seconds"
+//             );
+//             await this.sendFlow(
+//               from,
+//               process.env.WHATSAPP_SIGNUP_FLOW_ID,
+//               `onboarding_${Date.now()}`
+//             );
+//             await redis.setEx(`welcome:${from}`, 86400, "1"); // 24h cooldown
+//           }, 2000);
+//         }
+
+//         return;
 //       }
 
-//       // Process other messages with LangChain
-//       const response = await langchainService.processMessage(from, message, userId);
-//       await this.sendMessage(from, response);
-//       logger.info(`Handled message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)} -> Response: ${response}`);
-//       return response;
-//     } catch (error) {
-//       logger.error(`Error handling message from ${from}: ${error.message}`);
-//       await this.sendMessage(from, 'Sorry, something went wrong. Please try again.');
+//       let text = "";
+
+//       // === TEXT MESSAGE ===
+//       if (message.type === "text") {
+//         text = message.text.body.trim();
+//       }
+
+//       // === VOICE NOTE ===
+//       else if (message.type === "audio" || message.type === "voice") {
+//         const mediaId = message.audio?.id || message.voice?.id;
+//         if (!mediaId) {
+//           await this.sendMessage(
+//             from,
+//             "I couldn't process that voice note. Try again?"
+//           );
+//           return;
+//         }
+
+//         await this.sendMessage(from, "Listening to your voice note...");
+//         const mediaUrl = await this.getMediaUrl(mediaId);
+//         text = await transcribeVoice(mediaUrl);
+//         await this.sendMessage(from, `Heard: "${text}"`);
+//       }
+
+//       // === UNSUPPORTED ===
+//       else {
+//         await this.sendMessage(
+//           from,
+//           "I only understand text and voice notes for now!"
+//         );
+//         return;
+//       }
+
+//       if (!text) {
+//         await this.sendMessage(from, "I didn't catch that. Can you try again?");
+//         return;
+//       }
+
+//       // === PROCESS WITH AI ===
+//       const reply = await langchainService.processMessage(from, text, user.id);
+//       await this.sendMessage(from, reply);
+//     } catch (err) {
+//       logger.error(`[WhatsApp Handler Error] ${err.message}`, err);
+//       await this.sendMessage(
+//         from,
+//         "Sorry, something went wrong. Try again later."
+//       );
 //     }
 //   }
 
-//   static verifyWebhook(req) {
-//     const mode = req.query['hub.mode'];
-//     const token = req.query['hub.verify_token'];
-//     const challenge = req.query['hub.challenge'];
+//   // === GET MEDIA URL (VOICE NOTES) ===
+//   static async getMediaUrl(mediaId) {
+//     const res = await axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+//       headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+//     });
+//     return res.data.url;
+//   }
 
-//     if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-//       logger.info('Webhook verified successfully');
-//       return challenge;
+//   // === DECRYPT FLOW DATA (SIGNUP / LOGIN) ===
+//   static decryptFlowData(
+//     encrypted_flow_data,
+//     encrypted_aes_key,
+//     initial_vector
+//   ) {
+//     const privateKey = fs.readFileSync("private_key.pem", "utf8");
+
+//     const aesKey = crypto.privateDecrypt(
+//       {
+//         key: privateKey,
+//         padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+//         oaepHash: "sha256",
+//       },
+//       Buffer.from(encrypted_aes_key, "base64")
+//     );
+
+//     const iv = Buffer.from(initial_vector, "base64");
+//     const encrypted = Buffer.from(encrypted_flow_data, "base64");
+//     const authTag = encrypted.slice(-16);
+//     const ciphertext = encrypted.slice(0, -16);
+
+//     const decipher = crypto.createDecipheriv("aes-128-gcm", aesKey, iv);
+//     decipher.setAuthTag(authTag);
+
+//     const decrypted = Buffer.concat([
+//       decipher.update(ciphertext),
+//       decipher.final(),
+//     ]);
+//     return JSON.parse(decrypted.toString("utf8"));
+//   }
+
+//   // === PROCESS FLOW SUBMISSION ===
+//   static async processFlow(screen, data, flowToken, from) {
+//     try {
+//       if (screen === "SIGN_UP") {
+//         const { firstName, lastName, email, phone, password, pin } = data;
+//         const user = await UserService.createUser({
+//           email,
+//           phone,
+//           firstName,
+//           lastName,
+//           password,
+//           pin,
+//           whatsappId: from,
+//         });
+
+//         await this.sendMessage(
+//           from,
+//           `Account created successfully, ${firstName}!\n\nYou can now send money with voice or text.`
+//         );
+//         return;
+//       }
+
+//       if (screen === "SIGN_IN") {
+//         const { identifier, password } = data;
+//         const user = await UserService.findByIdentifier(identifier);
+//         if (!user || !(await UserService.verifyPassword(user.id, password))) {
+//           await this.sendMessage(from, "Invalid credentials. Try again.");
+//           return;
+//         }
+//         await prisma.user.update({
+//           where: { id: user.id },
+//           data: { whatsappId: from },
+//         });
+//         await this.sendMessage(
+//           from,
+//           `Welcome back, ${user.firstName}! You're logged in.`
+//         );
+//       }
+//     } catch (err) {
+//       logger.error(`[Flow Process Error] ${err.message}`);
+//       await this.sendMessage(from, "Action failed. Please try again.");
 //     }
-//     logger.warn('Webhook verification failed');
-//     throw new Error('Invalid verify token');
+//   }
+
+//   // === VERIFY WEBHOOK (GET) ===
+//   static verifyWebhook(query) {
+//     const mode = query["hub.mode"];
+//     const token = query["hub.verify_token"];
+//     const challenge = query["hub.challenge"];
+
+//     if (mode && token) {
+//       if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+//         logger.info("[Webhook Verified]");
+//         return challenge;
+//       }
+//     }
+//     throw new Error("Forbidden");
+//   }
+// }
+
+// export default WhatsAppService;
+
+// working whatsapp service no flow and interactive
+
+// import axios from "axios";
+// import crypto from "crypto";
+// import prisma from "../config/prisma.js";
+// import logger from "../config/logger.js";
+// import UserService from "./user.service.js";
+// import { langchainService } from "./ai.services.js";
+// import { transcribeVoice } from "./ai.whisper.js";
+// import redis from "../config/redis.js";
+
+// class WhatsAppService {
+//   static normalizePhone(number) {
+//     return number.replace(/^\+/, "");
+//   }
+
+//   static async sendMessage(to, text) {
+//     const recipient = this.normalizePhone(to);
+//     try {
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         {
+//           messaging_product: "whatsapp",
+//           to: recipient,
+//           type: "text",
+//           text: { body: text },
+//         },
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 15000,
+//         }
+//       );
+//       logger.info(`[WhatsApp → ${recipient}] ${text}`);
+//     } catch (err) {
+//       logger.error(`[Send Failed] ${JSON.stringify(err.response?.data || err.message)}`);
+//     }
+//   }
+
+//   static async sendInteractive(payload) {
+//     const recipient = this.normalizePhone(payload.to);
+//     const finalPayload = { ...payload, to: recipient };
+
+//     try {
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         finalPayload,
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 15000,
+//         }
+//       );
+//       logger.info(`[Buttons Sent] → ${recipient}`);
+//     } catch (err) {
+//       logger.error(`[Buttons Failed] ${JSON.stringify(err.response?.data)}`);
+//       await this.sendMessage(recipient, finalPayload.interactive.body.text + "\n\nReply *create account* to register");
+//     }
+//   }
+
+//   static async showSignupButtons(to, name) {
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: { text: `Hi ${name.split(" ")[0]}! Welcome to *Blocklo Finance*\n\nCreate your account in 60 seconds — right here on WhatsApp!\n\nTap below to start` },
+//         action: {
+//           buttons: [
+//             { type: "reply", reply: { id: "SIGNUP_START", title: "Create Account" } },
+//             { type: "reply", reply: { id: "LEARN_MORE", title: "What can I do?" } },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+//   // REDIS-BASED ONBOARDING — NO PRISMA ERRORS
+//   static async startInlineSignup(from, profileName) {
+//     await redis.setEx(`onboarding:${from}`, 3600, JSON.stringify({
+//       step: "name",
+//       data: {},
+//       profileName
+//     }));
+
+//     await this.sendMessage(from, `Great! Let's create your account\n\nReply with your full name (e.g. Chukwudi Okonkwo):`);
+//   }
+
+//   static async processInlineSignup(from, text) {
+//     const raw = await redis.get(`onboarding:${from}`);
+//     if (!raw) return false;
+
+//     const onboarding = JSON.parse(raw);
+//     let { step, data } = onboarding;
+
+//     if (step === "name") {
+//       if (text.trim().split(" ").length < 2) {
+//         await this.sendMessage(from, "Please send your full name (first and last).");
+//         return true;
+//       }
+//       const [firstName, ...rest] = text.trim().split(" ");
+//       const lastName = rest.join(" ") || "User";
+//       data = { ...data, firstName, lastName };
+
+//       await redis.setEx(`onboarding:${from}`, 3600, JSON.stringify({ step: "email", data }));
+//       await this.sendMessage(from, `Thanks, ${firstName}!\n\nNow send your email address:`);
+//       return true;
+//     }
+
+//     if (step === "email") {
+//       const email = text.trim().toLowerCase();
+//       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+//         await this.sendMessage(from, "Please send a valid email (e.g. john@gmail.com)");
+//         return true;
+//       }
+//       data = { ...data, email };
+
+//       await redis.setEx(`onboarding:${from}`, 3600, JSON.stringify({ step: "pin", data }));
+//       await this.sendMessage(from, `Email saved!\n\nNow set your 4-digit PIN:\nReply with 4 numbers (e.g. 1234)`);
+//       return true;
+//     }
+
+//     if (step === "pin") {
+//       if (!/^\d{4}$/.test(text.trim())) {
+//         await this.sendMessage(from, "Please reply with exactly 4 digits.");
+//         return true;
+//       }
+
+//       const finalData = {
+//         firstName: data.firstName,
+//         lastName: data.lastName,
+//         email: data.email,
+//         phone: from.replace("234", "0"),
+//         whatsappId: from,
+//         password: crypto.randomBytes(16).toString("hex"),
+//         transactionPin: text.trim(),
+//         termsAgreed: true,
+//         gender: 0,
+//         dateOfBirth: "1990-01-01",
+//         address: "Nigeria",
+//         nin: "PENDING",
+//         bvn: "PENDING",
+//       };
+
+//       await UserService.createUser(finalData);
+//       await redis.del(`onboarding:${from}`);
+
+//       await this.sendMessage(from,
+// `Account created successfully, ${data.firstName}!
+
+// Your Blocklo wallet is ready
+
+// Try saying:
+// • my balance
+// • send 5000 to mom
+// • save john 0123456789 GTBank
+
+// Welcome aboard!`
+//       );
+//       return true;
+//     }
+
+//     return false;
+//   }
+
+//   static async handleIncomingMessage(rawFrom, message, messageId, profileName = "User") {
+//     const from = this.normalizePhone(rawFrom);
+//     const text = (message.text?.body || "").toLowerCase().trim();
+
+//     try {
+//       const user = await prisma.user.findUnique({ where: { whatsappId: from } });
+
+//       // ONBOARDING IN PROGRESS (Redis)
+//       if (await redis.get(`onboarding:${from}`)) {
+//         if (message.type === "text") {
+//           await this.processInlineSignup(from, message.text.body);
+//         }
+//         return;
+//       }
+
+//       // BUTTON: Create Account
+//       if (message.interactive?.button_reply?.id === "SIGNUP_START") {
+//         await this.startInlineSignup(from, profileName);
+//         return;
+//       }
+
+//       // REGISTRATION KEYWORDS
+//       if (["create account", "sign up", "register", "start", "open account", "join", "account"].some(k => text.includes(k))) {
+//         const shown = await redis.get(`signup_shown:${from}`);
+//         if (!shown) {
+//           await this.showSignupButtons(from, profileName);
+//           await redis.setEx(`signup_shown:${from}`, 86400, "1");
+//         } else {
+//           await this.startInlineSignup(from, profileName);
+//         }
+//         return;
+//       }
+
+//       // NORMAL CHAT
+//       let inputText = message.text?.body?.trim() || "";
+//       if (message.type === "audio" || message.type === "voice") {
+//         const mediaId = message.audio?.id || message.voice?.id;
+//         if (mediaId) {
+//           await this.sendMessage(from, "Listening...");
+//           const url = await this.getMediaUrl(mediaId);
+//           inputText = await transcribeVoice(url);
+//           await this.sendMessage(from, `Heard: "${inputText}"`);
+//         }
+//       }
+
+//       const reply = await langchainService.processMessage(from, inputText || "hi", user?.id || null);
+//       await this.sendMessage(from, reply);
+
+//     } catch (err) {
+//       logger.error(`[Handler Error] ${err.message}`);
+//       await this.sendMessage(from, "Sorry, something went wrong. Say *create account* to register on WhatsApp.");
+//     }
+//   }
+
+//   static async getMediaUrl(mediaId) {
+//     const res = await axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+//       headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+//     });
+//     return res.data.url;
+//   }
+
+//   static verifyWebhook(query) {
+//     if (query["hub.mode"] === "subscribe" && query["hub.verify_token"] === process.env.WHATSAPP_VERIFY_TOKEN) {
+//       logger.info("[Webhook Verified]");
+//       return query["hub.challenge"];
+//     }
+//     throw new Error("Forbidden");
+//   }
+// }
+
+// export default WhatsAppService;
+
+// import axios from "axios";
+// import crypto from "crypto";
+// import prisma from "../config/prisma.js";
+// import logger from "../config/logger.js";
+// import UserService from "./user.service.js";
+// import { langchainService } from "./ai.services.js";
+// import { transcribeVoice } from "./ai.whisper.js";
+// import redis from "../config/redis.js";
+
+// class WhatsAppService {
+//   static normalizePhone(number) {
+//     return number.replace(/^\+/, "");
+//   }
+
+//   static async sendMessage(to, text) {
+//     const recipient = this.normalizePhone(to);
+//     await axios
+//       .post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         {
+//           messaging_product: "whatsapp",
+//           to: recipient,
+//           type: "text",
+//           text: { body: text },
+//         },
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 15000,
+//         }
+//       )
+//       .catch((err) => logger.error("Send failed:", err.response?.data));
+//   }
+
+//   static async sendInteractive(payload) {
+//     const recipient = this.normalizePhone(payload.to);
+//     const finalPayload = { ...payload, to: recipient };
+
+//     await axios
+//       .post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         finalPayload,
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 15000,
+//         }
+//       )
+//       .catch((err) => {
+//         logger.error("Interactive failed:", err.response?.data);
+//         this.sendMessage(
+//           recipient,
+//           finalPayload.interactive?.body?.text || "Please continue."
+//         );
+//       });
+//   }
+
+//   static async showWelcomeButton(to, name) {
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: `Hi ${
+//             name.split(" ")[0]
+//           }! Welcome to *Blocklo Finance*\n\nCreate your account in 60 seconds — right here on WhatsApp!`,
+//         },
+//         action: {
+//           buttons: [
+//             {
+//               type: "reply",
+//               reply: { id: "START_SIGNUP", title: "Create Account" },
+//             },
+//             {
+//               type: "reply",
+//               reply: { id: "LEARN_MORE", title: "What can I do?" },
+//             },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+//   static async startSignupFlow(from, profileName) {
+//     await redis.setEx(
+//       `onboarding:${from}`,
+//       3600,
+//       JSON.stringify({
+//         step: "gender",
+//         data: { profileName },
+//       })
+//     );
+
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to: from,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: "Let's create your Blocklo account\n\nFirst, select your gender:",
+//         },
+//         action: {
+//           buttons: [
+//             { type: "reply", reply: { id: "GENDER_MALE", title: "Male" } },
+//             { type: "reply", reply: { id: "GENDER_FEMALE", title: "Female" } },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+//   static async handleOnboarding(from, message) {
+//     const raw = await redis.get(`onboarding:${from}`);
+//     if (!raw) return false;
+//     const state = JSON.parse(raw);
+//     let { step, data } = state;
+
+//     // GENDER
+//     if (message.interactive?.button_reply?.id?.startsWith("GENDER_")) {
+//       data.gender =
+//         message.interactive.button_reply.id === "GENDER_MALE" ? 0 : 1;
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "name", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "What's your full name?\n(e.g. Chukwudi Okonkwo)"
+//       );
+//       return true;
+//     }
+
+//     // NAME
+//     if (step === "name" && message.text?.body) {
+//       const name = message.text.body.trim();
+//       if (name.split(" ").length < 2)
+//         return (
+//           this.sendMessage(from, "Please send full name (first + last)."), true
+//         );
+//       const [firstName, ...rest] = name.split(" ");
+//       data.firstName = firstName;
+//       data.lastName = rest.join(" ") || "User";
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "email", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         `Thanks, ${firstName}!\n\nNow send your email address:`
+//       );
+//       return true;
+//     }
+
+//     // EMAIL
+//     if (step === "email" && message.text?.body) {
+//       const email = message.text.body.trim().toLowerCase();
+//       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+//         return this.sendMessage(from, "Invalid email. Try again:"), true;
+//       data.email = email;
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "dob", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "What's your date of birth?\nReply in this format: dd/mm/yyyy\n(e.g. 15/08/1995)"
+//       );
+//       return true;
+//     }
+
+//     // DOB
+//     if (step === "dob" && message.text?.body) {
+//       const dob = message.text.body.trim();
+//       if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dob))
+//         return (
+//           this.sendMessage(
+//             from,
+//             "Please use format: dd/mm/yyyy\n(e.g. 21/09/1993)"
+//           ),
+//           true
+//         );
+//       data.dateOfBirth = dob;
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "address", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "What's your residential address?\n(e.g. 12 Adeola Odeku, Victoria Island, Lagos)"
+//       );
+//       return true;
+//     }
+
+//     // ADDRESS
+//     if (step === "address" && message.text?.body) {
+//       data.address = message.text.body.trim();
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "nin", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "Please send your 11-digit NIN:\n(e.g. 12345678901)"
+//       );
+//       return true;
+//     }
+
+//     // NIN
+//     if (step === "nin" && message.text?.body) {
+//       const nin = message.text.body.trim();
+//       if (!/^\d{11}$/.test(nin))
+//         return this.sendMessage(from, "NIN must be 11 digits."), true;
+//       data.nin = nin;
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "bvn", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "Please send your 11-digit BVN:\n(e.g. 22345678901)"
+//       );
+//       return true;
+//     }
+
+//     // BVN
+//     if (step === "bvn" && message.text?.body) {
+//       const bvn = message.text.body.trim();
+//       if (!/^\d{11}$/.test(bvn))
+//         return this.sendMessage(from, "BVN must be 11 digits."), true;
+//       data.bvn = bvn;
+
+//       await redis.setEx(
+//         `onboarding:${from}`,
+//         3600,
+//         JSON.stringify({ step: "pin", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         `Almost done!\n\nNow set your 4-digit transaction PIN:\nReply with 4 numbers (e.g. 1234)\n\nYour PIN will be hidden`
+//       );
+//       return true;
+//     }
+
+//     // PIN
+//     if (step === "pin" && message.text?.body) {
+//       const pin = message.text.body.trim();
+//       if (!/^\d{4}$/.test(pin))
+//         return (
+//           this.sendMessage(from, "Please reply with exactly 4 digits."), true
+//         );
+
+//       const finalData = {
+//         email: data.email,
+//         phone: from.replace("234", "0"),
+//         whatsappId: from,
+//         firstName: data.firstName,
+//         lastName: data.lastName,
+//         password: crypto.randomBytes(20).toString("hex"),
+//         pin: pin,
+//         termsAgreed: true,
+//         gender: data.gender,
+//         dateOfBirth: data.dateOfBirth, // Already in dd/mm/yyyy
+//         address: data.address,
+//         nin: data.nin,
+//         bvn: data.bvn,
+//         ninUserId: "PENDING", // or generate if needed
+//       };
+
+//       try {
+//         await UserService.createUser(finalData);
+//         await redis.del(`onboarding:${from}`);
+
+//         await this.sendMessage(
+//           from,
+//           `Account created successfully, ${data.firstName}!
+
+// Your Blocklo + 9PSB wallet is being activated...
+
+// You can now:
+// • Check balance
+// • Send money
+// • Buy airtime
+// • Pay bills
+
+// Welcome to the future of banking on WhatsApp!`
+//         );
+//       } catch (err) {
+//         logger.error("User creation failed:", err.message);
+//         await this.sendMessage(
+//           from,
+//           "Account creation failed. Please try again later."
+//         );
+//       }
+//       return true;
+//     }
+
+//     return false;
+//   }
+
+//   static async handleIncomingMessage(
+//     rawFrom,
+//     message,
+//     messageId,
+//     profileName = "User"
+//   ) {
+//     const from = this.normalizePhone(rawFrom);
+
+//     try {
+//       const user = await prisma.user.findUnique({
+//         where: { whatsappId: from },
+//       });
+
+//       // ONBOARDING IN PROGRESS
+//       if (await redis.get(`onboarding:${from}`)) {
+//         await this.handleOnboarding(from, message);
+//         return;
+//       }
+
+//       // BUTTONS
+//       if (message.interactive?.button_reply?.id === "START_SIGNUP") {
+//         await this.startSignupFlow(from, profileName);
+//         return;
+//       }
+//       if (message.interactive?.button_reply?.id === "LEARN_MORE") {
+//         await this.sendMessage(
+//           from,
+//           "With Blocklo you can bank on WhatsApp:\n• Send money\n• Check balance\n• Buy airtime\n• Pay bills\nNo app needed!\n\nReady to join?"
+//         );
+//         return;
+//       }
+
+//       // KEYWORDS
+//       const text = (message.text?.body || "").toLowerCase();
+//       if (
+//         [
+//           "create account",
+//           "register",
+//           "sign up",
+//           "start",
+//           "join",
+//           "open account",
+//           "account",
+//         ].some((k) => text.includes(k))
+//       ) {
+//         await this.showWelcomeButton(from, profileName);
+//         return;
+//       }
+
+//       // NORMAL AI CHAT
+//       let input = message.text?.body?.trim() || "";
+//       if (message.type === "audio" || message.type === "voice") {
+//         const mediaId = message.audio?.id || message.voice?.id;
+//         if (mediaId) {
+//           await this.sendMessage(from, "Listening...");
+//           const url = await this.getMediaUrl(mediaId);
+//           input = await transcribeVoice(url);
+//           await this.sendMessage(from, `Heard: "${input}"`);
+//         }
+//       }
+
+//       const reply = await langchainService.processMessage(
+//         from,
+//         input || "hi",
+//         user?.id || null
+//       );
+//       await this.sendMessage(from, reply);
+//     } catch (err) {
+//       logger.error("Handler error:", err);
+//       await this.sendMessage(
+//         from,
+//         "Sorry, something went wrong. Say *create account* to register."
+//       );
+//     }
+//   }
+
+//   static async getMediaUrl(mediaId) {
+//     const res = await axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+//       headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+//     });
+//     return res.data.url;
+//   }
+
+//   static verifyWebhook(query) {
+//     if (
+//       query["hub.mode"] === "subscribe" &&
+//       query["hub.verify_token"] === process.env.WHATSAPP_VERIFY_TOKEN
+//     ) {
+//       return query["hub.challenge"];
+//     }
+//     throw new Error("Forbidden");
+//   }
+// }
+
+// export default WhatsAppService;
+
+// FINAL 100% WORKING VERSION — NO MORE ERRORS
+// import axios from "axios";
+// import crypto from "crypto";
+// import prisma from "../config/prisma.js";
+// import logger from "../config/logger.js";
+// import UserService from "./user.service.js";
+// import { langchainService } from "./ai.services.js";
+// import { transcribeVoice } from "./ai.whisper.js";
+// import redis from "../config/redis.js";
+
+// class WhatsAppService {
+//   static normalizePhone(number) {
+//     return number.replace(/^\+/, "");
+//   }
+
+//   // ROBUST SEND MESSAGE WITH RETRY
+//   static async sendMessage(to, text) {
+//     const recipient = this.normalizePhone(to);
+//     const payload = {
+//       messaging_product: "whatsapp",
+//       to: recipient,
+//       type: "text",
+//       text: { body: text },
+//     };
+
+//     for (let i = 0; i < 3; i++) {
+//       try {
+//         await axios.post(
+//           `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//           payload,
+//           {
+//             headers: {
+//               Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//               "Content-Type": "application/json",
+//             },
+//             timeout: 10000,
+//           }
+//         );
+//         logger.info(`[WhatsApp → ${recipient}] ${text}`);
+//         return;
+//       } catch (err) {
+//         const error = err.response?.data || err.message;
+//         logger.error(`Send attempt ${i + 1} failed:`, error);
+
+//         if (error?.error?.code === 131009 || error?.error?.code === 131051) {
+//           // Token expired or invalid
+//           logger.error("WhatsApp token expired or invalid!");
+//           break;
+//         }
+//         if (i === 2) {
+//           logger.error("All send attempts failed for:", recipient);
+//         }
+//         await new Promise((r) => setTimeout(r, 2000));
+//       }
+//     }
+
+//     // Final fallback
+//     logger.error(`FAILED to send to ${recipient}: ${text}`);
+//   }
+
+//   static async sendInteractive(payload) {
+//     const recipient = this.normalizePhone(payload.to);
+//     const finalPayload = { ...payload, to: recipient };
+
+//     try {
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         finalPayload,
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 10000,
+//         }
+//       );
+//       logger.info(`[Interactive → ${recipient}] Sent`);
+//     } catch (err) {
+//       logger.error("Interactive failed:", err.response?.data || err.message);
+//       await this.sendMessage(
+//         recipient,
+//         "Please reply with your info to continue registration."
+//       );
+//     }
+//   }
+
+//   static async showWelcomeButton(to, name) {
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: `Hi ${
+//             name.split(" ")[0]
+//           }! Welcome to *Blocklo Finance*\n\nCreate your account in 60 seconds — right here on WhatsApp!`,
+//         },
+//         action: {
+//           buttons: [
+//             {
+//               type: "reply",
+//               reply: { id: "START_SIGNUP", title: "Create Account" },
+//             },
+//             {
+//               type: "reply",
+//               reply: { id: "LEARN_MORE", title: "What can I do?" },
+//             },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+//   static async startSignupFlow(from, profileName) {
+//     await redis.setEx(
+//       `onboarding:${from}`,
+//       3600,
+//       JSON.stringify({
+//         step: "gender",
+//         data: { profileName },
+//       })
+//     );
+
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to: from,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: "Let's create your Blocklo account\n\nFirst, select your gender:",
+//         },
+//         action: {
+//           buttons: [
+//             { type: "reply", reply: { id: "GENDER_MALE", title: "Male" } },
+//             { type: "reply", reply: { id: "GENDER_FEMALE", title: "Female" } },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+
+
+//   static async handleOnboarding(from, message) {
+//     const redisKey = `onboarding:${from}`;
+//     const raw = await redis.get(redisKey);
+
+//     // IF USER SENDS ANYTHING AFTER FAILURE → FORCE FULL RESET
+//     if (!raw || message.text?.body?.trim().toLowerCase() === "start over") {
+//       await redis.del(redisKey);
+//       await this.sendMessage(from, "Starting fresh registration...");
+//       await this.startSignupFlow(from, "User");
+//       return true;
+//     }
+
+//     const state = JSON.parse(raw);
+//     let { step, data } = state;
+
+//     // === GENDER ===
+//     if (message.interactive?.button_reply?.id?.startsWith("GENDER_")) {
+//       data.gender =
+//         message.interactive.button_reply.id === "GENDER_MALE" ? 0 : 1;
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "name", data }));
+//       await this.sendMessage(
+//         from,
+//         "What's your full name?\n(e.g. Chukwudi Okonkwo)"
+//       );
+//       return true;
+//     }
+
+//     // === NAME ===
+//     if (step === "name" && message.text?.body) {
+//       const name = message.text.body.trim();
+//       if (name.split(" ").length < 2) {
+//         await this.sendMessage(
+//           from,
+//           "Please send your full name (first + last)."
+//         );
+//         return true;
+//       }
+//       const [firstName, ...rest] = name.split(" ");
+//       data.firstName = firstName;
+//       data.lastName = rest.join(" ") || "User";
+
+//       await redis.setEx(
+//         redisKey,
+//         3600,
+//         JSON.stringify({ step: "email", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         `Thanks, ${firstName}!\n\nNow send your email address:`
+//       );
+//       return true;
+//     }
+
+//     // === EMAIL ===
+//     if (step === "email" && message.text?.body) {
+//       const email = message.text.body.trim().toLowerCase();
+//       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+//         await this.sendMessage(from, "Invalid email. Try again:");
+//         return true;
+//       }
+//       data.email = email;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "dob", data }));
+//       await this.sendMessage(
+//         from,
+//         "Date of birth? (dd/mm/yyyy)\ne.g. 15/08/1995"
+//       );
+//       return true;
+//     }
+
+//     // === DOB ===
+//     if (step === "dob" && message.text?.body) {
+//       const dob = message.text.body.trim();
+//       if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dob)) {
+//         await this.sendMessage(from, "Use format: dd/mm/yyyy");
+//         return true;
+//       }
+//       data.dateOfBirth = dob;
+
+//       await redis.setEx(
+//         redisKey,
+//         3600,
+//         JSON.stringify({ step: "address", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "Your residential address?\n(e.g. 12 Adeola Odeku, Victoria Island, Lagos)"
+//       );
+//       return true;
+//     }
+
+//     // === ADDRESS ===
+//     if (step === "address" && message.text?.body) {
+//       data.address = message.text.body.trim();
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "nin", data }));
+//       await this.sendMessage(from, "Your 11-digit NIN:");
+//       return true;
+//     }
+
+//     // === NIN ===
+//     if (step === "nin" && message.text?.body) {
+//       const nin = message.text.body.trim();
+//       if (!/^\d{11}$/.test(nin)) {
+//         await this.sendMessage(
+//           from,
+//           "NIN must be 11 digits: \n(e.g. 12345678901)"
+//         );
+//         return true;
+//       }
+//       data.nin = nin;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "bvn", data }));
+//       await this.sendMessage(from, "Your 11-digit BVN: \n(e.g. 22345678901)");
+//       return true;
+//     }
+
+//     // === BVN ===
+//     if (step === "bvn" && message.text?.body) {
+//       const bvn = message.text.body.trim();
+//       if (!/^\d{11}$/.test(bvn)) {
+//         await this.sendMessage(from, "BVN must be 11 digits.");
+//         return true;
+//       }
+//       data.bvn = bvn;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "pin", data }));
+//       await this.sendMessage(
+//         from,
+//         `Almost done!\n\nSet your 4-digit PIN:\n(e.g. 1234)`
+//       );
+//       return true;
+//     }
+
+//     // === FINAL: PIN → DESTROY REDIS + FRESH DATA ONLY ===
+//     if (step === "pin" && message.text?.body) {
+//       const pin = message.text.body.trim();
+//       if (!/^\d{4}$/.test(pin)) {
+//         await this.sendMessage(from, "Please reply with exactly 4 digits.");
+//         return true;
+//       }
+
+//       // CRITICAL: DELETE REDIS NOW — NO CHANCE OF REUSING OLD DATA
+//       await redis.del(redisKey);
+
+//       // Fresh ninUserId — generated NOW
+//       const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+//       let prefix = "";
+//       for (let i = 0; i < 6; i++)
+//         prefix += letters[Math.floor(Math.random() * 26)];
+//       const ninUserId =
+//         prefix + "-" + String(Math.floor(1000 + Math.random() * 9000));
+
+//       const finalData = {
+//         email: data.email,
+//         phone: from.replace("234", "0"),
+//         whatsappId: from,
+//         firstName: data.firstName,
+//         lastName: data.lastName,
+//         password: crypto.randomBytes(20).toString("hex"),
+//         pin,
+//         termsAgreed: true,
+//         gender: data.gender,
+//         dateOfBirth: data.dateOfBirth,
+//         address: data.address,
+//         nin: data.nin,
+//         bvn: data.bvn,
+//         ninUserId,
+//       };
+
+//       try {
+//         const result = await UserService.createUser(finalData);
+//         const accountNumber = result.accountNumber;
+
+//         await this.sendMessage(
+//           from,
+//           `Account created successfully, ${result.firstName}!
+
+// Your 9PSB Wallet is LIVE
+
+// Account Number: ${accountNumber || "11000XXXXX"}
+// Bank: 9 Payment Service Bank (9PSB)
+
+// Say *balance* to check your money
+
+// Welcome to Blocklo`
+//         );
+//       } catch (err) {
+//         const msg = err.message || "";
+//         if (msg.includes("Wallet Already Exists") || msg.includes("42")) {
+//           await this.sendMessage(
+//             from,
+//             "This NIN/BVN already has a wallet. Use different details."
+//           );
+//         } else {
+//           await this.sendMessage(
+//             from,
+//             "Registration failed. Say *start over* to try again."
+//           );
+//         }
+//       }
+//       return true;
+//     }
+
+//     return false;
+//   }
+
+//   static async handleIncomingMessage(
+//     rawFrom,
+//     message,
+//     messageId,
+//     profileName = "User"
+//   ) {
+//     const from = this.normalizePhone(rawFrom);
+
+//     // EARLY CHECK: Is user registered?
+//     const userContext = await langchainService.getUserContext(from);
+
+//     if (!userContext) {
+//       // Not registered → force onboarding
+//       await this.sendMessage(
+//         from,
+//         `Hi${profileName ? " " + profileName.split(" ")[0] : ""}! 
+
+// I see you haven't created your Blocklo × 9PSB wallet yet.
+
+// Say *create account* to open your bank account in 60 seconds — right here on WhatsApp!`
+//       );
+//       return;
+//     }
+
+//     try {
+//       if (await redis.get(`onboarding:${from}`)) {
+//         await this.handleOnboarding(from, message);
+//         return;
+//       }
+
+//       if (message.interactive?.button_reply?.id === "START_SIGNUP") {
+//         await this.startSignupFlow(from, profileName);
+//         return;
+//       }
+
+//       if (message.interactive?.button_reply?.id === "LEARN_MORE") {
+//         await this.sendMessage(
+//           from,
+//           "With Blocklo you can:\n• Send money\n• Check balance\n• Buy airtime\n• Pay bills\nAll on WhatsApp!\n\nSay *create account* to start"
+//         );
+//         return;
+//       }
+
+//       const text = (message.text?.body || "").toLowerCase();
+//       if (
+//         [
+//           "create account",
+//           "register",
+//           "sign up",
+//           "open account",
+//           "account",
+//         ].some((k) => text.includes(k))
+//       ) {
+//         await this.showWelcomeButton(from, profileName);
+//         return;
+//       }
+
+//       // Normal AI chat
+//       let input = message.text?.body?.trim() || "";
+//       if (message.type === "audio" || message.type === "voice") {
+//         const mediaId = message.audio?.id || message.voice?.id;
+//         if (mediaId) {
+//           await this.sendMessage(from, "Listening...");
+//           const url = await this.getMediaUrl(mediaId);
+//           input = await transcribeVoice(url);
+//         }
+//       }
+
+//       const reply = await langchainService.processMessage(
+//         from,
+//         input || "hi",
+//         null
+//       );
+//       await this.sendMessage(from, reply);
+//     } catch (err) {
+//       logger.error("Handler error:", err);
+//       await this.sendMessage(
+//         from,
+//         "Sorry, something went wrong. Say *create account* to register."
+//       );
+//     }
+//   }
+
+//   static async getMediaUrl(mediaId) {
+//     const res = await axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+//       headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+//     });
+//     return res.data.url;
+//   }
+
+//   static verifyWebhook(query) {
+//     if (
+//       query["hub.mode"] === "subscribe" &&
+//       query["hub.verify_token"] === process.env.WHATSAPP_VERIFY_TOKEN
+//     ) {
+//       return query["hub.challenge"];
+//     }
+//     throw new Error("Forbidden");
 //   }
 // }
 
@@ -158,398 +1406,557 @@
 
 
 
-import logger from '../config/logger.js';
-import { langchainService } from './ai.services.js';
-import prisma from '../config/prisma.js';
-import UserService from './user.service.js';
-import axios from 'axios';
-import fs from "fs";
-import crypto from "crypto";  // Full module import first
-import { privateDecrypt, createDecipheriv, createCipheriv } from "crypto";   
 
 
 
 
+
+// import axios from "axios";
+// import crypto from "crypto";
+// import prisma from "../config/prisma.js";
+// import logger from "../config/logger.js";
+// import UserService from "./user.service.js";
+// import { langchainService } from "./ai.services.js";
+// import { transcribeVoice } from "./ai.whisper.js";
+// import redis from "../config/redis.js";
+
+// class WhatsAppService {
+//   static normalizePhone(number) {
+//     return number.replace(/^\+/, "");
+//   }
+
+//   // ROBUST SEND MESSAGE WITH RETRY
+//   static async sendMessage(to, text) {
+//     const recipient = this.normalizePhone(to);
+//     const payload = {
+//       messaging_product: "whatsapp",
+//       to: recipient,
+//       type: "text",
+//       text: { body: text },
+//     };
+
+//     for (let i = 0; i < 3; i++) {
+//       try {
+//         await axios.post(
+//           `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//           payload,
+//           {
+//             headers: {
+//               Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//               "Content-Type": "application/json",
+//             },
+//             timeout: 10000,
+//           }
+//         );
+//         logger.info(`[WhatsApp → ${recipient}] ${text}`);
+//         return;
+//       } catch (err) {
+//         const error = err.response?.data || err.message;
+//         logger.error(`Send attempt ${i + 1} failed:`, error);
+
+//         if (error?.error?.code === 131009 || error?.error?.code === 131051) {
+//           // Token expired or invalid
+//           logger.error("WhatsApp token expired or invalid!");
+//           break;
+//         }
+//         if (i === 2) {
+//           logger.error("All send attempts failed for:", recipient);
+//         }
+//         await new Promise((r) => setTimeout(r, 2000));
+//       }
+//     }
+
+//     // Final fallback
+//     logger.error(`FAILED to send to ${recipient}: ${text}`);
+//   }
+
+//   static async sendInteractive(payload) {
+//     const recipient = this.normalizePhone(payload.to);
+//     const finalPayload = { ...payload, to: recipient };
+
+//     try {
+//       await axios.post(
+//         `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+//         finalPayload,
+//         {
+//           headers: {
+//             Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+//             "Content-Type": "application/json",
+//           },
+//           timeout: 10000,
+//         }
+//       );
+//       logger.info(`[Interactive → ${recipient}] Sent`);
+//     } catch (err) {
+//       logger.error("Interactive failed:", err.response?.data || err.message);
+//       await this.sendMessage(
+//         recipient,
+//         "Please reply with your info to continue registration."
+//       );
+//     }
+//   }
+
+//   static async showWelcomeButton(to, name) {
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: `Hi ${
+//             name.split(" ")[0]
+//           }! Welcome to *Blocklo Finance*\n\nCreate your account in 60 seconds — right here on WhatsApp!`,
+//         },
+//         action: {
+//           buttons: [
+//             {
+//               type: "reply",
+//               reply: { id: "START_SIGNUP", title: "Create Account" },
+//             },
+//             {
+//               type: "reply",
+//               reply: { id: "LEARN_MORE", title: "What can I do?" },
+//             },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+//   static async startSignupFlow(from, profileName) {
+//     await redis.setEx(
+//       `onboarding:${from}`,
+//       3600,
+//       JSON.stringify({
+//         step: "gender",
+//         data: { profileName },
+//       })
+//     );
+
+//     await this.sendInteractive({
+//       messaging_product: "whatsapp",
+//       to: from,
+//       type: "interactive",
+//       interactive: {
+//         type: "button",
+//         body: {
+//           text: "Let's create your Blocklo account\n\nFirst, select your gender:",
+//         },
+//         action: {
+//           buttons: [
+//             { type: "reply", reply: { id: "GENDER_MALE", title: "Male" } },
+//             { type: "reply", reply: { id: "GENDER_FEMALE", title: "Female" } },
+//           ],
+//         },
+//       },
+//     });
+//   }
+
+
+
+//   static async handleOnboarding(from, message) {
+//     const redisKey = `onboarding:${from}`;
+//     const raw = await redis.get(redisKey);
+
+//     // IF USER SENDS ANYTHING AFTER FAILURE → FORCE FULL RESET
+//     if (!raw || message.text?.body?.trim().toLowerCase() === "start over") {
+//       await redis.del(redisKey);
+//       await this.sendMessage(from, "Starting fresh registration...");
+//       await this.startSignupFlow(from, "User");
+//       return true;
+//     }
+
+//     const state = JSON.parse(raw);
+//     let { step, data } = state;
+
+//     // === GENDER ===
+//     if (message.interactive?.button_reply?.id?.startsWith("GENDER_")) {
+//       data.gender =
+//         message.interactive.button_reply.id === "GENDER_MALE" ? 0 : 1;
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "name", data }));
+//       await this.sendMessage(
+//         from,
+//         "What's your full name?\n(e.g. Chukwudi Okonkwo)"
+//       );
+//       return true;
+//     }
+
+//     // === NAME ===
+//     if (step === "name" && message.text?.body) {
+//       const name = message.text.body.trim();
+//       if (name.split(" ").length < 2) {
+//         await this.sendMessage(
+//           from,
+//           "Please send your full name (first + last)."
+//         );
+//         return true;
+//       }
+//       const [firstName, ...rest] = name.split(" ");
+//       data.firstName = firstName;
+//       data.lastName = rest.join(" ") || "User";
+
+//       await redis.setEx(
+//         redisKey,
+//         3600,
+//         JSON.stringify({ step: "email", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         `Thanks, ${firstName}!\n\nNow send your email address:`
+//       );
+//       return true;
+//     }
+
+//     // === EMAIL ===
+//     if (step === "email" && message.text?.body) {
+//       const email = message.text.body.trim().toLowerCase();
+//       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+//         await this.sendMessage(from, "Invalid email. Try again:");
+//         return true;
+//       }
+//       data.email = email;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "dob", data }));
+//       await this.sendMessage(
+//         from,
+//         "Date of birth? (dd/mm/yyyy)\ne.g. 15/08/1995"
+//       );
+//       return true;
+//     }
+
+//     // === DOB ===
+//     if (step === "dob" && message.text?.body) {
+//       const dob = message.text.body.trim();
+//       if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dob)) {
+//         await this.sendMessage(from, "Use format: dd/mm/yyyy");
+//         return true;
+//       }
+//       data.dateOfBirth = dob;
+
+//       await redis.setEx(
+//         redisKey,
+//         3600,
+//         JSON.stringify({ step: "address", data })
+//       );
+//       await this.sendMessage(
+//         from,
+//         "Your residential address?\n(e.g. 12 Adeola Odeku, Victoria Island, Lagos)"
+//       );
+//       return true;
+//     }
+
+//     // === ADDRESS ===
+//     if (step === "address" && message.text?.body) {
+//       data.address = message.text.body.trim();
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "nin", data }));
+//       await this.sendMessage(from, "Your 11-digit NIN:");
+//       return true;
+//     }
+
+//     // === NIN ===
+//     if (step === "nin" && message.text?.body) {
+//       const nin = message.text.body.trim();
+//       if (!/^\d{11}$/.test(nin)) {
+//         await this.sendMessage(
+//           from,
+//           "NIN must be 11 digits: \n(e.g. 12345678901)"
+//         );
+//         return true;
+//       }
+//       data.nin = nin;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "bvn", data }));
+//       await this.sendMessage(from, "Your 11-digit BVN: \n(e.g. 22345678901)");
+//       return true;
+//     }
+
+//     // === BVN ===
+//     if (step === "bvn" && message.text?.body) {
+//       const bvn = message.text.body.trim();
+//       if (!/^\d{11}$/.test(bvn)) {
+//         await this.sendMessage(from, "BVN must be 11 digits.");
+//         return true;
+//       }
+//       data.bvn = bvn;
+
+//       await redis.setEx(redisKey, 3600, JSON.stringify({ step: "pin", data }));
+//       await this.sendMessage(
+//         from,
+//         `Almost done!\n\nSet your 4-digit PIN:\n(e.g. 1234)`
+//       );
+//       return true;
+//     }
+
+//     // === FINAL: PIN → DESTROY REDIS + FRESH DATA ONLY ===
+//     if (step === "pin" && message.text?.body) {
+//       const pin = message.text.body.trim();
+//       if (!/^\d{4}$/.test(pin)) {
+//         await this.sendMessage(from, "Please reply with exactly 4 digits.");
+//         return true;
+//       }
+
+//       // CRITICAL: DELETE REDIS NOW — NO CHANCE OF REUSING OLD DATA
+//       await redis.del(redisKey);
+
+//       // Fresh ninUserId — generated NOW
+//       const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+//       let prefix = "";
+//       for (let i = 0; i < 6; i++)
+//         prefix += letters[Math.floor(Math.random() * 26)];
+//       const ninUserId =
+//         prefix + "-" + String(Math.floor(1000 + Math.random() * 9000));
+
+//       const finalData = {
+//         email: data.email,
+//         phone: from.replace("234", "0"),
+//         whatsappId: from,
+//         firstName: data.firstName,
+//         lastName: data.lastName,
+//         password: crypto.randomBytes(20).toString("hex"),
+//         pin,
+//         termsAgreed: true,
+//         gender: data.gender,
+//         dateOfBirth: data.dateOfBirth,
+//         address: data.address,
+//         nin: data.nin,
+//         bvn: data.bvn,
+//         ninUserId,
+//       };
+
+//       try {
+//         const result = await UserService.createUser(finalData);
+//         const accountNumber = result.accountNumber;
+
+//         await this.sendMessage(
+//           from,
+//           `Account created successfully, ${result.firstName}!
+
+// Your 9PSB Wallet is LIVE
+
+// Account Number: ${accountNumber || "11000XXXXX"}
+// Bank: 9 Payment Service Bank (9PSB)
+
+// Say *balance* to check your money
+
+// Welcome to Blocklo`
+//         );
+//       } catch (err) {
+//         const msg = err.message || "";
+//         if (msg.includes("Wallet Already Exists") || msg.includes("42")) {
+//           await this.sendMessage(
+//             from,
+//             "This NIN/BVN already has a wallet. Use different details."
+//           );
+//         } else {
+//           await this.sendMessage(
+//             from,
+//             "Registration failed. Say *start over* to try again."
+//           );
+//         }
+//       }
+//       return true;
+//     }
+
+//     return false;
+//   }
+
+//   static async handleIncomingMessage(
+//     rawFrom,
+//     message,
+//     messageId,
+//     profileName = "User"
+//   ) {
+//     const from = this.normalizePhone(rawFrom);
+
+//     // EARLY CHECK: Is user registered?
+//     const userContext = await langchainService.getUserContext(from);
+
+//     if (!userContext) {
+//       // Not registered → force onboarding
+//       await this.sendMessage(
+//         from,
+//         `Hi${profileName ? " " + profileName.split(" ")[0] : ""}! 
+
+// I see you haven't created your Blocklo × 9PSB wallet yet.
+
+// Say *create account* to open your bank account in 60 seconds — right here on WhatsApp!`
+//       );
+//       return;
+//     }
+
+//     try {
+//       if (await redis.get(`onboarding:${from}`)) {
+//         await this.handleOnboarding(from, message);
+//         return;
+//       }
+
+//       if (message.interactive?.button_reply?.id === "START_SIGNUP") {
+//         await this.startSignupFlow(from, profileName);
+//         return;
+//       }
+
+//       if (message.interactive?.button_reply?.id === "LEARN_MORE") {
+//         await this.sendMessage(
+//           from,
+//           "With Blocklo you can:\n• Send money\n• Check balance\n• Buy airtime\n• Pay bills\nAll on WhatsApp!\n\nSay *create account* to start"
+//         );
+//         return;
+//       }
+
+//       const text = (message.text?.body || "").toLowerCase();
+//       if (
+//         [
+//           "create account",
+//           "register",
+//           "sign up",
+//           "open account",
+//           "account",
+//         ].some((k) => text.includes(k))
+//       ) {
+//         await this.showWelcomeButton(from, profileName);
+//         return;
+//       }
+
+//       // Normal AI chat
+//       let input = message.text?.body?.trim() || "";
+//       if (message.type === "audio" || message.type === "voice") {
+//         const mediaId = message.audio?.id || message.voice?.id;
+//         if (mediaId) {
+//           await this.sendMessage(from, "Listening...");
+//           const url = await this.getMediaUrl(mediaId);
+//           input = await transcribeVoice(url);
+//         }
+//       }
+
+//       const reply = await langchainService.processMessage(
+//         from,
+//         input || "hi",
+//         null
+//       );
+//       await this.sendMessage(from, reply);
+//     } catch (err) {
+//       logger.error("Handler error:", err);
+//       await this.sendMessage(
+//         from,
+//         "Sorry, something went wrong. Say *create account* to register."
+//       );
+//     }
+//   }
+
+//   static async getMediaUrl(mediaId) {
+//     const res = await axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+//       headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` },
+//     });
+//     return res.data.url;
+//   }
+
+//   static verifyWebhook(query) {
+//     if (
+//       query["hub.mode"] === "subscribe" &&
+//       query["hub.verify_token"] === process.env.WHATSAPP_VERIFY_TOKEN
+//     ) {
+//       return query["hub.challenge"];
+//     }
+//     throw new Error("Forbidden");
+//   }
+// }
+
+// export default WhatsAppService;
+
+
+// src/services/whatsapp.service.js
+import axios from "axios";
+import logger from "../config/logger.js";
+import { langchainService } from "./ai.services.js";
 
 class WhatsAppService {
-   static async uploadPublicKey() {
-    try {
-      if (!process.env.WHATSAPP_REGISTRATION_FLOW_ID) {
-        throw new Error('WHATSAPP_REGISTRATION_FLOW_ID is not set in .env');
-      }
-      if (!process.env.WHATSAPP_PHONE_NUMBER_ID) {
-        throw new Error('WHATSAPP_PHONE_NUMBER_ID is not set in .env');
-      }
-      const publicKey = fs.readFileSync('public_key.pem', 'utf8');
-      const response = await axios.post(
-        `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/whatsapp_business_encryption`,
-        {
-          business_public_key: publicKey,
-          enabled: true
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      console.log(`[WhatsApp] Public key uploaded for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}:`, response.data);
-      logger.info(`Public key uploaded for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}`);
-      return response.data;
-    } catch (error) {
-      const errorMessage = error.response?.data?.error?.message || error.message;
-      console.error(`[WhatsApp] Failed to upload public key for Phone Number ${process.env.WHATSAPP_PHONE_NUMBER_ID}:`, error.response?.data || error.message);
-      logger.error(`Failed to upload public key: ${errorMessage}`);
-      throw new Error(`Failed to upload public key: ${errorMessage}`);
-    }
+  static normalizePhone(number) {
+    return number.toString().replace(/[^\d]/g, "").replace(/^234/, "234");
   }
 
-
-
-
-  //   static async decryptFlowData(encryptedFlowData, encryptedFlowId) {
-  //   try {
-  //     if (!process.env.WHATSAPP_FLOW_PRIVATE_KEY) {
-  //       throw new Error('WHATSAPP_FLOW_PRIVATE_KEY is not set in .env');
-  //     }
-
-  //     // Decode Base64-encoded private key
-  //     const privateKey = Buffer.from(process.env.WHATSAPP_FLOW_PRIVATE_KEY, 'base64').toString('utf8');
-      
-  //     // Validate encrypted_flow_data format
-  //     if (typeof encryptedFlowData !== 'string' || !encryptedFlowData.includes('.')) {
-  //       logger.warn(`[WhatsApp Flow] Invalid encrypted_flow_data format: ${encryptedFlowData}`);
-  //       throw new Error('Invalid encrypted_flow_data format');
-  //     }
-
-  //     const [iv, encrypted, authTag] = encryptedFlowData.split('.');
-  //     if (!iv || !encrypted || !authTag) {
-  //       logger.warn(`[WhatsApp Flow] Incomplete encrypted_flow_data components: iv=${iv}, encrypted=${encrypted}, authTag=${authTag}`);
-  //       throw new Error('Invalid encrypted_flow_data format');
-  //     }
-
-  //     // Validate encrypted_flow_id
-  //     if (encryptedFlowId !== process.env.WHATSAPP_REGISTRATION_FLOW_ID) {
-  //       logger.warn(`[WhatsApp Flow] Flow ID mismatch: ${encryptedFlowId} != ${process.env.WHATSAPP_REGISTRATION_FLOW_ID}`);
-  //       throw new Error('Invalid flow ID');
-  //     }
-
-  //     // Decrypt using AES-256-GCM
-  //     const key = createHash('sha256').update(privateKey).digest();
-  //     const decipher = createDecipheriv(
-  //       'aes-256-gcm',
-  //       key,
-  //       Buffer.from(iv, 'base64')
-  //     );
-  //     decipher.setAuthTag(Buffer.from(authTag, 'base64'));
-  //     let decrypted = decipher.update(Buffer.from(encrypted, 'base64'));
-  //     decrypted = Buffer.concat([decrypted, decipher.final()]);
-      
-  //     const decryptedData = JSON.parse(decrypted.toString('utf8'));
-  //     logger.info(`[WhatsApp Flow] Decrypted data: ${JSON.stringify(decryptedData, null, 2)}`);
-      
-  //     return decryptedData;
-  //   } catch (error) {
-  //     logger.error(`[WhatsApp Flow] Decryption error: ${error.message}`);
-  //     throw new Error(`Failed to decrypt flow data: ${error.message}`);
-  //   }
-  // }
-
-static async decryptFlowData(encryptedFlowData, encryptedAesKey, initialVector) {
-  try {
-    // Load private key from PEM file (no .env fallback)
-    const privateKeyPem = fs.readFileSync("private_key.pem", "utf8").trim();
-    if (!privateKeyPem.startsWith('-----BEGIN PRIVATE KEY-----') && !privateKeyPem.startsWith('-----BEGIN RSA PRIVATE KEY-----')) {
-      throw new Error("Invalid private key format in private_key.pem: Must be PEM-encoded RSA key");
-    }
-
-    // Check for constants availability
-    if (typeof crypto.constants === 'undefined') {
-      throw new Error("crypto.constants is undefined. Ensure 'import crypto from \"crypto\";' is at the top of the file.");
-    }
-
-    // Step 1: Base64 decode the inputs
-    const encryptedAesKeyBuffer = Buffer.from(encryptedAesKey, "base64");
-    const ivBuffer = Buffer.from(initialVector, "base64");
-    const encryptedDataBuffer = Buffer.from(encryptedFlowData, "base64");
-
-    if (encryptedAesKeyBuffer.length === 0 || ivBuffer.length !== 16 || encryptedDataBuffer.length < 16) {
-      throw new Error(`Invalid input buffer lengths: AES key ${encryptedAesKeyBuffer.length}, IV ${ivBuffer.length}, Data ${encryptedDataBuffer.length}`);
-    }
-
-    // Warn on suspiciously short data (like in your logs)
-    if (encryptedDataBuffer.length < 100) {
-      logger.warn(`[WhatsApp Flow] Suspiciously short encrypted_data (${encryptedDataBuffer.length} bytes) - may be stub or test payload`);
-    }
-
-    // Step 2: RSA decrypt the AES key (OAEP padding with SHA-256 MGF1)
-    const aesKeyBuffer = privateDecrypt(
-      {
-        key: privateKeyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-        oaepHash: "sha256",
-      },
-      encryptedAesKeyBuffer
-    );
-    if (aesKeyBuffer.length !== 16) {
-      throw new Error(`Invalid AES key length after decryption: ${aesKeyBuffer.length} (expected 16)`);
-    }
-
-    // Step 3: Extract auth tag (last 16 bytes) and ciphertext
-    const authTag = encryptedDataBuffer.slice(-16);
-    const ciphertext = encryptedDataBuffer.slice(0, -16);
-
-    // Step 4: AES-GCM decrypt
-    const decipher = createDecipheriv("aes-128-gcm", aesKeyBuffer, ivBuffer);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(ciphertext);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-    // Step 5: Parse JSON
-    const decryptedData = JSON.parse(decrypted.toString("utf8"));
-
-    // In Step 5, after JSON.parse:
-
-// Log the exact content (add this line)
-console.log(`[DEBUG] Exact decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);  // Or use logger
-
-logger.info(`[WhatsApp Flow] Raw decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);
-
-    // DEBUG: Always log the full raw decrypted JSON
-    logger.info(`[WhatsApp Flow] Raw decrypted JSON: ${JSON.stringify(decryptedData, null, 2)}`);
-
-    // Validation as warnings (non-fatal for debugging)
-    if (decryptedData.action?.name !== "data_exchange") {
-      logger.warn(`[WhatsApp Flow] Unexpected or missing action: ${decryptedData.action?.name || 'undefined'}. Full payload: ${JSON.stringify(decryptedData)}`);
-    }
-
-    if (!decryptedData.screen || !decryptedData.data || !decryptedData.flow_token) {
-      logger.warn(`[WhatsApp Flow] Missing some expected fields (screen/data/flow_token). Available: screen=${decryptedData.screen}, hasData=${!!decryptedData.data}, hasToken=${!!decryptedData.flow_token}`);
-    }
-
-    // Return extracted fields (with fallbacks)
-    return {
-      screen: decryptedData.screen || 'UNKNOWN',
-      data: decryptedData.data || {},
-      flowToken: decryptedData.flow_token || 'unknown',
-      aesKey: aesKeyBuffer,  // For response encryption
-      iv: ivBuffer,  // For IV flipping in response
-      ...decryptedData
+  static async sendMessage(to, text) {
+    const recipient = this.normalizePhone(to);
+    const payload = {
+      messaging_product: "whatsapp",
+      to: recipient,
+      type: "text",
+      text: { body: text },
     };
-  } catch (error) {
-    logger.error(`[WhatsApp Flow] Decryption error details: ${error.message}`);
-    if (error.message.includes('bad decrypt')) {
-      logger.error('Likely cause: Mismatched public/private key pair. Re-upload public key via uploadPublicKey().');
-    }
-    if (error.message.includes('decipher.final')) {
-      logger.error('Likely cause: Invalid AES key, IV, or auth tag (wrong key or tampered data).');
-    }
-    throw new Error(`Failed to decrypt flow data: ${error.message}`);
-  }
-}
 
-// New method: Encrypt response (AES-GCM with same key, flipped IV)
-static encryptResponse(plaintextJson, aesKeyBuffer, ivBuffer) {
-  try {
-    // Step 1: Flip IV (bitwise NOT on each byte: ivFlipped[i] = 0xFF ^ iv[i])
-    const flippedIv = Buffer.alloc(ivBuffer.length);
-    for (let i = 0; i < ivBuffer.length; i++) {
-      flippedIv[i] = 0xFF ^ ivBuffer[i];
-    }
-
-    // Step 2: UTF-8 encode plaintext
-    const plaintextBuffer = Buffer.from(plaintextJson, "utf8");
-
-    // Step 3: AES-GCM encrypt (no random nonce/IV here—use flipped one)
-    const cipher = createCipheriv("aes-128-gcm", aesKeyBuffer, flippedIv);
-    let encrypted = cipher.update(plaintextBuffer);
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    const authTag = cipher.getAuthTag();
-
-    // Step 4: Concat ciphertext + authTag
-    const encryptedBuffer = Buffer.concat([encrypted, authTag]);
-
-    // Step 5: Base64 encode
-    const encryptedBase64 = encryptedBuffer.toString("base64");
-
-    logger.info(`[WhatsApp Flow] Encrypted response length: ${encryptedBase64.length}`);
-    return encryptedBase64;
-  } catch (error) {
-    logger.error(`[WhatsApp Flow] Encryption error: ${error.message}`);
-    throw new Error(`Failed to encrypt response: ${error.message}`);
-  }
-}
-
-  static async sendMessage(to, message) {
-    try {
-      if (!process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_ACCESS_TOKEN) {
-        throw new Error('Missing WhatsApp configuration');
-      }
-
-      const response = await axios.post(
-        `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          to,
-          type: 'text',
-          text: { body: message },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      logger.info(`Message sent to ${to}: ${message}`);
-      return response.data;
-    } catch (error) {
-      logger.error(`Error sending WhatsApp message to ${to}: ${error.response?.data?.error?.message || error.message}`);
-      throw new Error(`Failed to send message: ${error.message}`);
-    }
-  }
-
-  static async sendRegistrationFlow(to, flowId, flowToken) {
-    try {
-      const response = await axios.post(
-        `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-        {
-          messaging_product: 'whatsapp',
-          to,
-          type: 'interactive',
-          interactive: {
-            type: 'flow',
-            action: {
-              name: 'flow',
-              parameters: {
-                flow_id: flowId,
-                flow_token: flowToken,
-                flow_action: 'data_exchange',
-                flow_cta: 'Register or Sign In',
-                whatsapp_number: to, // Pre-fill phone field
-              },
+    for (let i = 0; i < 3; i++) {
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+              "Content-Type": "application/json",
             },
-          },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json',
-          },
-        }
+            timeout: 10000,
+          }
+        );
+        logger.info(`[WhatsApp → ${recipient}] ${text}`);
+        return;
+      } catch (err) {
+        if (i === 2) logger.error("Failed to send message:", err.response?.data || err.message);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+
+  static async sendInteractive(to, interactive) {
+    const recipient = this.normalizePhone(to);
+    try {
+      await axios.post(
+        `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+        { messaging_product: "whatsapp", to: recipient, type: "interactive", interactive },
+        { headers: { Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}` } }
       );
-      logger.info(`Flow sent to ${to}: Flow ID ${flowId}`);
-      return response.data;
-    } catch (error) {
-      logger.error(`Error sending Flow to ${to}: ${error.response?.data?.error?.message || error.message}`);
-      throw new Error(`Failed to send Flow: ${error.message}`);
+      logger.info(`[Interactive → ${recipient}] Sent`);
+    } catch (err) {
+      logger.error("Interactive failed:", err.response?.data);
+      await this.sendMessage(to, "Please reply to continue.");
     }
   }
 
-  static async handleIncomingMessage(from, message, messageId) {
+  // ONLY ONE JOB: Forward everything to AI
+  static async handleIncomingMessage(rawFrom, message, messageId, profileName = "User") {
+    const from = this.normalizePhone(rawFrom);
+    const text = message.text?.body?.trim() || "";
+    const isButton = message.interactive?.button_reply?.id;
+
     try {
-      // Map WhatsApp ID to user
-      let user = await prisma.user.findUnique({ where: { whatsappId: from } });
-      const userId = user ? user.id : null;
+      // Let AI handle EVERYTHING: onboarding, buttons, voice, registration, chat
+      const reply = await langchainService.handleWhatsAppMessage({
+        from,
+        text,
+        message,
+        profileName,
+        buttonId: isButton,
+      });
 
-      logger.info(`Received message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)}`);
-
-      // Handle Flow response
-      if (typeof message === 'object' && message.type === 'interactive' && message.interactive?.type === 'flow') {
-        const flowData = message.interactive.flow_response?.data;
-        const screen = message.interactive.flow_response?.screen;
-        await this.handleFlowResponse(from, message.interactive.flow_token, screen, flowData);
-        return;
+      if (reply) {
+        if (reply.type === "interactive") {
+          await this.sendInteractive(from, reply.payload);
+        } else {
+          await this.sendMessage(from, reply.text);
+        }
       }
-
-      // Process other messages with LangChain
-      const response = await langchainService.processMessage(from, message, userId);
-      await this.sendMessage(from, response);
-      logger.info(`Handled message from ${from} (user ${userId || 'unknown'}): ${JSON.stringify(message)} -> Response: ${response}`);
-      return response;
-    } catch (error) {
-      logger.error(`Error handling message from ${from}: ${error.message}`);
-      await this.sendMessage(from, 'Sorry, something went wrong. Please try again.');
+    } catch (err) {
+      logger.error("AI handler failed:", err);
+      await this.sendMessage(from, "Sorry, I'm having issues. Try again soon.");
     }
   }
 
-  static async handleFlowResponse(from, flowToken, screen, flowData) {
-    try {
-      if (!flowData || !screen) {
-        logger.warn(`Invalid Flow response from ${from}: Missing data or screen`);
-        await this.sendMessage(from, 'Invalid Flow response. Please try again.');
-        return;
-      }
-
-      if (screen === 'SIGN_UP') {
-        const { firstName, lastName, email, phone, password, pin, terms_agreement } = flowData;
-        if (!terms_agreement) {
-          await this.sendMessage(from, 'You must agree to the terms and conditions to register.');
-          return;
-        }
-        if (phone !== from) {
-          await this.sendMessage(from, 'Phone number must match your WhatsApp number.');
-          return;
-        }
-
-        const newUser = await UserService.createUser({
-          email,
-          phone,
-          firstName,
-          lastName,
-          password,
-          pin,
-          whatsappId: phone,
-        });
-
-        await this.sendMessage(from, `Registration successful! Welcome, ${firstName}.`);
-        logger.info(`User registered via Flow from ${from}: ${email}, flow_token: ${flowToken}`);
-      } else if (screen === 'SIGN_IN') {
-        const { identifier, password } = flowData;
-        const user = await UserService.findByIdentifier(identifier);
-        if (!user) {
-          await this.sendMessage(from, 'User not found. Please register first.');
-          return;
-        }
-
-        const valid = await UserService.verifyPassword(user.id, password);
-        if (!valid) {
-          await this.sendMessage(from, 'Invalid credentials. Please try again.');
-          return;
-        }
-
-        await this.sendMessage(from, `Login successful! Welcome back, ${user.firstName}.`);
-        logger.info(`User logged in via Flow from ${from}: ${identifier}, flow_token: ${flowToken}`);
-      } else {
-        logger.warn(`Unsupported Flow screen from ${from}: ${screen}`);
-        await this.sendMessage(from, 'Unsupported Flow screen. Please try again.');
-      }
-    } catch (error) {
-      logger.error(`Error handling Flow response from ${from}: ${error.message}`);
-      await this.sendMessage(from, 'Sorry, something went wrong. Please try again.');
+  static verifyWebhook(query) {
+    if (query["hub.mode"] === "subscribe" && query["hub.verify_token"] === process.env.WHATSAPP_VERIFY_TOKEN) {
+      return query["hub.challenge"];
     }
-  }
-  
-
-  static verifyWebhook(req) {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-
-    if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-      logger.info('Webhook verified successfully');
-      console.log(`[WhatsApp Webhook] Verification successful, challenge: ${challenge}`);
-      return challenge;
-    }
-    logger.warn('Webhook verification failed');
-    console.log('[WhatsApp Webhook] Verification failed: Invalid verify token');
-    throw new Error('Invalid verify token');
+    throw new Error("Forbidden");
   }
 }
 
 export default WhatsAppService;
-
-
-
-
