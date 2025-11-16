@@ -33,6 +33,9 @@ model User {
   telegramId      String?  @unique
   termsAgreed     Boolean
   createdAt       DateTime @default(now())
+
+  kycLevel        Int      @default(1)  // 1 = Tier 1 (No KYC), 2 = Tier 2 (BVN), 3 = Tier 3 (NIN + Address)
+
   updatedAt       DateTime @updatedAt
   
   // Relationships

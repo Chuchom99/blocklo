@@ -1070,6 +1070,7 @@ class LangChainService {
       firstName: user.firstName,
       accountNumber: acc.accountNumber,
       balance: Number(acc.balance).toLocaleString("en-NG"),
+      kycLevel: user.kycLevel || 1,
       recentTransactions: acc.transactions.map((t) => ({
         date: new Date(t.createdAt).toLocaleDateString("en-NG"),
         amount: t.amount.toLocaleString("en-NG"),
@@ -1130,7 +1131,9 @@ class LangChainService {
     }
 
     // REGISTERED USER → FULL AI CHAT
-    return await this.processAIChat(from, text || "hi", userContext);
+    // return await this.processAIChat(from, text || "hi", userContext);
+    const userId = userContext.userId || from; // fallback
+return await this.processAIChat(from, text || "hi", userContext, userId);
   }
 
   // FULL ONBOARDING FLOW — NOW 100% IN AI
@@ -1236,6 +1239,7 @@ class LangChainService {
         phone: from.replace("234", "0"),
         password: crypto.randomBytes(20).toString("hex"),
         termsAgreed: true,
+        kycLevel: 1,
       };
 
       try {
@@ -1285,7 +1289,7 @@ Welcome to Blocklo × 9PSB`,
     };
   }
 
-  async processAIChat(from, message, userContext) {
+  async processAIChat(from, message, userContext, userId) {
     // SAFETY FIRST — NEVER CRASH
     if (!userContext || !userContext.name) {
       return "Hi! I recognize you but couldn't load your details. Say *balance* to refresh.";
@@ -1298,12 +1302,44 @@ Welcome to Blocklo × 9PSB`,
 
     const history = await this.getHistory(from);
 
+        // FAST PATH: VAS / BILLS / TRANSFER
+    const vasReply = await VasIntentService.process(userId, message);
+    if (vasReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(from, "assistant", vasReply);
+      await redis.setEx(cacheKey, 3600, JSON.stringify(vasReply));
+      return {text: vasReply};
+    }
+
+    const billReply = await BillsIntentService.process(userId, message, from);
+    if (billReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(from, "assistant", billReply);
+      await redis.setEx(cacheKey, 3600, JSON.stringify(billReply));
+      return {text: billReply};
+    }
+
+    const transferReply = await TransferIntentService.process(
+      userId,
+      message,
+      from
+    );
+    if (transferReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(from, "assistant", transferReply);
+      await redis.setEx(cacheKey, 3600, JSON.stringify(transferReply));
+      return {text: transferReply};
+    }
+
+
+
     const systemPrompt = `You are Blocklo Assistant — a smart Nigerian banking AI.
 
 USER CONTEXT:
 • Name: ${userContext.name}
 • Account: ${userContext.accountNumber}
 • Balance: ₦${userContext.balance}
+• KYC Level: Tier ${userContext.kycLevel}
 
 Be warm, professional, and speak like a real bank.
 Greet by name. Confirm transfers. Never share full BVN/NIN.`;

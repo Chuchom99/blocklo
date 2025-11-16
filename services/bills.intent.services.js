@@ -246,7 +246,20 @@ export class BillsIntentService {
 
     try {
       const billersRes = await PsbVasService.getCategoryBillers("1");
-      const biller = billersRes.data.find((b) => b.id === "BP-ABUJA");
+      // Smart detection based on common keywords
+      let billerId = "BP-ABUJA"; // default AEDC
+
+      if (message.toLowerCase().includes("ikeja")) billerId = "BP-IKEJA";
+      else if (message.toLowerCase().includes("eko")) billerId = "BP-EKO";
+      else if (message.toLowerCase().includes("ibadan")) billerId = "BP-IBADAN";
+      else if (message.toLowerCase().includes("enugu")) billerId = "BP-ENUGU";
+      else if (message.toLowerCase().includes("kano")) billerId = "BP-KANO";
+      else if (message.toLowerCase().includes("ph")) billerId = "BP-PH";
+      else if (message.toLowerCase().includes("jos")) billerId = "BP-JOS";
+
+      const biller =
+        billersRes.data.find((b) => b.id === billerId) ||
+        billersRes.data.find((b) => b.id.includes("ABUJA"));
       if (!biller) return "AEDC not available.";
 
       // VALIDATE meter → get real name
@@ -300,12 +313,13 @@ export class BillsIntentService {
       const account = await prisma.account.findFirst({ where: { userId } });
       if (!account) return "No wallet.";
 
-      // === FIX PHONE: +2348012345677 → 08123456789 ===
-      let phone = from.replace("+234", "0"); // → 08012345677
-      if (phone.length === 10) phone = "0" + phone; // → 008012345677 → NO!
-      if (phone.length !== 11) {
-        logger.warn(`[ELECTRICITY] Invalid phone length: ${phone}`);
-        return "Invalid phone number.";
+      // Convert WhatsApp number (+2348012345678) → 08012345678
+      let phone = from.replace(/^\+234/, "0"); // +234 → 0
+      phone = phone.replace(/[^\d]/g, ""); // remove any non-digit
+      if (phone.length === 10) phone = "0" + phone;
+      if (!/^0\d{10}$/.test(phone)) {
+        logger.warn(`[BILLS] Invalid phone for validation: ${from} → ${phone}`);
+        phone = "08012345678"; // fallback or skip validation
       }
 
       const validateRes = await PsbVasService.validateBillerInputs({
@@ -354,6 +368,10 @@ export class BillsIntentService {
     ) {
       return null;
     }
+    // INSTANT SHORTCUTS — NIGERIANS LOVE THIS
+if (message.toLowerCase().includes("light") || message.toLowerCase().includes("nepa")) {
+  return "Pay Electricity Bill\n\nReply with:\n• Meter number + amount (e.g. *12345678901 N5000*)\n• Or just meter (e.g. *12345678901*) and I’ll ask amount";
+}
 
     const handlers = [
       this.handleListCategories,

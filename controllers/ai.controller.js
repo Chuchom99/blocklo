@@ -44,7 +44,7 @@ export const processAiMessage = async (req, res) => {
         .json({ success: false, message: "Missing 'from' or 'message' field" });
     }
 
-    const aiResponse = await langchainService.processMessage(from, message, userId);
+    const aiResponse = await langchainService.processAIChat(from, message, userId);
 
     return res.status(200).json({
       success: true,
