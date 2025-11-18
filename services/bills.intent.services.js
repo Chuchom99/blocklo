@@ -362,12 +362,31 @@ export class BillsIntentService {
   // === PROCESS INTENT ===
 
   static async process(userId, message, from) {
+      // BLOCK BILLS IF USER IS IN AIRTIME OR DATA FLOW
+  const vasContext = await redis.get(`vas:${from}`);
+  if (vasContext) {
+    try {
+      const ctx = JSON.parse(vasContext);
+      if (ctx.flow === "airtime" || ctx.flow === "data") {
+        return null; // LET VAS HANDLE IT — DO NOT INTERFERE
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // BLOCK IF USER IS IN ANY ONGOING FLOW (optional but smart)
+  const ongoingFlow = await redis.get(`flow:${from}`);
+  if (ongoingFlow) return null;
+    
     if (
       message.toLowerCase().includes("save") ||
       message.toLowerCase().includes("beneficiar")
     ) {
       return null;
     }
+
+
     // INSTANT SHORTCUTS — NIGERIANS LOVE THIS
 if (message.toLowerCase().includes("light") || message.toLowerCase().includes("nepa")) {
   return "Pay Electricity Bill\n\nReply with:\n• Meter number + amount (e.g. *12345678901 N5000*)\n• Or just meter (e.g. *12345678901*) and I’ll ask amount";

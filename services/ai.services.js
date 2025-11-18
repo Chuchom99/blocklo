@@ -349,150 +349,7 @@
 // export const langchainService = new LangChainService();
 // export default LangChainService;
 
-// Groq model
-// src/services/langchain.service.js
-// import { ChatGroq } from "@langchain/groq";
-// import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-// import { IntentService } from "../config/intent.service.js";
-// import {
-//   handleBalance,
-//   handleTransfer,
-//   handleTransactionHistory,
-//   handleKycStatus,
-// } from "./ai.handler.js";
-// import WhatsAppService from "./whatsapp.services.js";
-// import logger from "../config/logger.js";
-// import redis from "../config/redis.js";
 
-// class LangChainService {
-//   constructor() {
-//     this.llm = process.env.GROQ_API_KEY
-//       ? new ChatGroq({
-//           apiKey: process.env.GROQ_API_KEY,
-//           model: "llama-3.1-8b-instant",
-//           temperature: 0.5,
-//         })
-//       : null;
-//   }
-
-// // Inside _llmReply
-// async _llmReply(message) {
-//   try {
-//     const res = await this.llm.invoke([
-//       { role: "system", content: "You are Blocklo, a friendly banking assistant. Be concise." },
-//       { role: "user", content: message },
-//     ]);
-//     return res.content || "Hi! How can I help?";
-//   } catch (err) {
-//     logger.warn(`[LLM] Invoke failed: ${err.message}`);
-//     throw err;
-//   }
-// }
-
-// async processMessage(from, message, userId) {
-//   const cacheKey = `ai:${from}:${Buffer.from(message).toString("base64").slice(0, 50)}`;
-
-//   try {
-//     // === 1. CACHE HIT ===
-//     const cached = await redis.get(cacheKey);
-//     if (cached) {
-//       logger.info(`[AI] Cache hit for ${from}`);
-//       return JSON.parse(cached);
-//     }
-
-//     // === 2. INTENT DETECTION ===
-//     const result = IntentService.detect(message);
-//     let reply = "";
-
-//     // === 3. HIGH CONFIDENCE ROUTING ===
-//     if (result.confidence >= 0.6) {
-//       try {
-//         switch (result.intent) {
-//           case "balance":
-//             reply = await handleBalance(userId);
-//             break;
-
-//           case "transfer":
-//             if (result.extracted) {
-//               reply = await handleTransfer(
-//                 from,
-//                 `send ${result.extracted.amount} to ${result.extracted.account}`,
-//                 userId
-//               );
-//             } else {
-//               reply = "Please say: send 500 to 0123456789";
-//             }
-//             break;
-
-//           case "history":
-//             reply = await handleTransactionHistory(userId);
-//             break;
-
-//           case "kyc":
-//             reply = await handleKycStatus(userId);
-//             break;
-
-//           case "register":
-//             const flowId = process.env.WHATSAPP_REGISTRATION_FLOW_ID;
-//             if (flowId) {
-//               await WhatsAppService.sendRegistrationFlow(from, flowId, "signup");
-//               reply = "Check your WhatsApp — complete the form to register.";
-//             } else {
-//               reply = "Registration unavailable.";
-//             }
-//             break;
-
-//           case "help":
-//             reply = `Available commands:
-// • check balance
-// • send 500 to 0123456789
-// • show history
-// • kyc status
-// • register`;
-//             break;
-
-//           default:
-//             reply = "I didn't understand. Try: check balance, send, help";
-//         }
-//       } catch (handlerErr) {
-//         logger.error(`[Handler] ${result.intent} failed: ${handlerErr.message}`);
-//         reply = "I'm having trouble with that. Try again.";
-//       }
-//     }
-//     // === 4. LOW CONFIDENCE FALLBACK ===
-//     else {
-//       const suggestion = IntentService.suggest(message);
-//       if (suggestion) {
-//         reply = suggestion;
-//       } else if (this.llm) {
-//         try {
-//           reply = await this._llmReply(message);
-//         } catch (llmErr) {
-//           logger.warn(`[LLM] Failed: ${llmErr.message}`);
-//           reply = "Hi! Try: balance, send, register";
-//         }
-//       } else {
-//         reply = "Hi! Try: balance, send, register";
-//       }
-//     }
-
-//     // === 5. CACHE RESULT ===
-//     try {
-//       await redis.setEx(cacheKey, 3600, JSON.stringify(reply));
-//     } catch (cacheErr) {
-//       logger.warn(`[Redis] Cache failed: ${cacheErr.message}`);
-//     }
-
-//     return reply;
-
-//   } catch (err) {
-//     logger.error(`[AI] Critical error: ${err.message}`);
-//     return "I'm having trouble. Try again in a moment.";
-//   }
-// }
-// }
-
-// export const langchainService = new LangChainService();
 
 //without user context
 // import { ChatDeepSeek } from "@langchain/deepseek";
@@ -1007,7 +864,6 @@ import redis from "../config/redis.js";
 import prisma from "../config/prisma.js";
 import UserService from "./user.service.js";
 import crypto from "crypto";
-// import WhatsAppService from "./whatsapp.service.js";
 import { psbFunctions, psbVasFunctions } from "../tools/index.js";
 import {
   VasIntentService,
@@ -1133,7 +989,7 @@ class LangChainService {
     // REGISTERED USER → FULL AI CHAT
     // return await this.processAIChat(from, text || "hi", userContext);
     const userId = userContext.userId || from; // fallback
-return await this.processAIChat(from, text || "hi", userContext, userId);
+    return await this.processAIChat(from, text || "hi", userContext, userId);
   }
 
   // FULL ONBOARDING FLOW — NOW 100% IN AI
@@ -1302,13 +1158,63 @@ Welcome to Blocklo × 9PSB`,
 
     const history = await this.getHistory(from);
 
-        // FAST PATH: VAS / BILLS / TRANSFER
-    const vasReply = await VasIntentService.process(userId, message);
-    if (vasReply) {
-      await this.saveMessage(from, "user", message);
-      await this.saveMessage(from, "assistant", vasReply);
-      await redis.setEx(cacheKey, 3600, JSON.stringify(vasReply));
-      return {text: vasReply};
+    // FAST PATH: VAS / BILLS / TRANSFER
+    // const vasReply = await VasIntentService.process(userId, message);
+    // if (vasReply) {
+    //   await this.saveMessage(from, "user", message);
+    //   await this.saveMessage(from, "assistant", vasReply);
+    //   await redis.setEx(cacheKey, 3600, JSON.stringify(vasReply));
+    //   return {text: vasReply};
+    // }
+    // === SMART AIRTIME & DATA FLOW — NIGERIA'S SMARTEST AI EVER ===
+    const vasContext = await redis.get(`vas:${from}`);
+    if (vasContext) {
+      try {
+        const ctx = JSON.parse(vasContext);
+
+        // SUPPORT BOTH AIRTIME AND DATA
+        if (
+          ctx.flow === "airtime" &&
+          ctx.network &&
+          ctx.network !== "UNKNOWN"
+        ) {
+          const networkEmoji =
+            { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
+              ctx.network
+            ] || "";
+          const reply = `${networkEmoji} Perfect! How much *${ctx.network}* **airtime** do you want?\n\n(₦100 - ₦50,000)`;
+
+          await this.saveMessage(from, "assistant", reply);
+          await redis.setEx(cacheKey, 3600, JSON.stringify(reply));
+          return { text: reply };
+        }
+
+        if (ctx.flow === "data" && ctx.network && ctx.network !== "UNKNOWN") {
+          const networkEmoji =
+            { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
+              ctx.network
+            ] || "";
+          const reply = `${networkEmoji} Great! How much *${ctx.network}* **data** do you want to buy?\n\nReply with amount (e.g. *₦500*) or say *plans* to see bundles`;
+
+          await this.saveMessage(from, "assistant", reply);
+          // When user says "buy airtime"
+await redis.setEx(`vas:${from}`, 1800, JSON.stringify({
+  flow: "airtime",
+  step: "awaiting_phone"
+}));
+return "Which number do you want to recharge?";
+
+// When user says "buy data"
+await redis.setEx(`vas:${from}`, 1800, JSON.stringify({
+  flow: "data",
+  step: "awaiting_phone"
+}));
+return "Which number do you want data for?";
+          return { text: reply };
+        }
+      } catch (err) {
+        logger.warn("Failed to parse vas context:", err);
+      }
     }
 
     const billReply = await BillsIntentService.process(userId, message, from);
@@ -1316,7 +1222,7 @@ Welcome to Blocklo × 9PSB`,
       await this.saveMessage(from, "user", message);
       await this.saveMessage(from, "assistant", billReply);
       await redis.setEx(cacheKey, 3600, JSON.stringify(billReply));
-      return {text: billReply};
+      return { text: billReply };
     }
 
     const transferReply = await TransferIntentService.process(
@@ -1328,10 +1234,8 @@ Welcome to Blocklo × 9PSB`,
       await this.saveMessage(from, "user", message);
       await this.saveMessage(from, "assistant", transferReply);
       await redis.setEx(cacheKey, 3600, JSON.stringify(transferReply));
-      return {text: transferReply};
+      return { text: transferReply };
     }
-
-
 
     const systemPrompt = `You are Blocklo Assistant — a smart Nigerian banking AI.
 

@@ -34,9 +34,9 @@ import logger from "../config/logger.js";
  * @desc    Process user message through AI (LangChain + 9PSB logic)
  * @body    { from, message, userId }
  */
-export const processAiMessage = async (req, res) => {
+export const processAIChat = async (req, res) => {
   try {
-    const { from, message, userId } = req.body;
+    const { from, message, userContext, userId } = req.body;
 
     if (!from || !message) {
       return res
@@ -44,7 +44,7 @@ export const processAiMessage = async (req, res) => {
         .json({ success: false, message: "Missing 'from' or 'message' field" });
     }
 
-    const aiResponse = await langchainService.processAIChat(from, message, userId);
+    const aiResponse = await langchainService.processAIChat(from, message, userContext, userId);
 
     return res.status(200).json({
       success: true,
