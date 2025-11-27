@@ -34,7 +34,7 @@ model User {
   termsAgreed     Boolean
   createdAt       DateTime @default(now())
 
-  kycLevel        Int      @default(1)  // 1 = Tier 1 (No KYC), 2 = Tier 2 (BVN), 3 = Tier 3 (NIN + Address)
+  kycLevel        Int      @default(2)  // 1 = Tier 1 (No KYC), 2 = Tier 2 (BVN), 3 = Tier 3 (NIN + Address)
 
   updatedAt       DateTime @updatedAt
   
@@ -65,7 +65,7 @@ model Account {
   accountNumber String       @unique
   accountName   String?
   provider      String       @default("9PSB")
-  balance       Float        @default(0.0)
+  // balance       Float        @default(0.0)
   currency      String       @default("NGN")
   status        String       @default("ACTIVE")
   createdAt     DateTime     @default(now())

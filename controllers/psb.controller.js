@@ -33,6 +33,35 @@ class PsbController {
     }
   }
 
+    static async balanceEnquiry(req, res) {
+    const schema = Joi.object({
+      accountNo: Joi.string().required().messages({
+        "any.required": "accountNo is required",
+      }),
+    });
+
+    const { error: validationError } = schema.validate(req.body);
+    if (validationError) {
+      logger.warn(
+        `Validation error during wallet enquiry: ${validationError.details[0].message}`
+      );
+      return res
+        .status(400)
+        .json({ success: false, message: validationError.details[0].message });
+    }
+
+    try {
+      const { accountNo } = req.body;
+      const data = await PsbService.getBalance(accountNo);
+      res.json({ success: true, message: "Wallet enquiry successful", data });
+    } catch (err) {
+      logger.error(`Wallet Enquiry Error: ${err.message}`);
+      res
+        .status(500)
+        .json({ success: false, message: "Wallet enquiry failed" });
+    }
+  }
+
   static async debitWallet(req, res) {
     const schema = Joi.object({
       accountNo: Joi.string().required(),
@@ -179,6 +208,8 @@ class PsbController {
       destinationAccount: Joi.string().length(10).required(),
       destinationBankCode: Joi.string().required(),
       destinationName: Joi.string().optional(),
+      senderName: Joi.string().optional(),
+      name: Joi.string().optional(),
       merchant: Joi.object({
         isFee: Joi.boolean().required(),
         merchantFeeAmount: Joi.string().allow("", null).optional(),
@@ -208,8 +239,8 @@ class PsbController {
 
   static async otherBankEnquiry(req, res) {
     const schema = Joi.object({
-      accountNumber: Joi.string().length(10).required(),
-      bankCode: Joi.string().required(),
+      account: Joi.string().length(10).required(),
+      bank: Joi.string().required(),
     });
 
     const { error: validationError } = schema.validate(req.body);
@@ -219,8 +250,8 @@ class PsbController {
     }
 
     try {
-      const { accountNumber, bankCode } = req.body;
-      const data = await PsbService.otherBankEnquiry(accountNumber, bankCode);
+      const { account, bank } = req.body;
+      const data = await PsbService.otherBankEnquiry(account, bank);
       res.json({ success: true, message: "Account name enquiry successful", data });
     } catch (err) {
       logger.error(`Other Bank Enquiry Error: ${err.message}`);

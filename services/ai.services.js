@@ -349,8 +349,6 @@
 // export const langchainService = new LangChainService();
 // export default LangChainService;
 
-
-
 //without user context
 // import { ChatDeepSeek } from "@langchain/deepseek";
 // import logger from "../config/logger.js";
@@ -870,6 +868,7 @@ import {
   BillsIntentService,
   TransferIntentService,
 } from "../intent/index.js";
+import PsbService from "./psb.service.js";
 
 class LangChainService {
   constructor() {
@@ -916,17 +915,29 @@ class LangChainService {
 
     if (!user || !user.accounts?.[0] || !user.firstName) {
       logger.info(`[AI] Incomplete user data for ${from}`);
-      return null; // Force unregistered flow
+      return null;
     }
 
     const acc = user.accounts[0];
+
+    // 🔥 GET LIVE PSB BALANCE (clean version)
+    const amount = await PsbService.getBalance(acc.accountNumber);
+    const liveBalance = amount.toLocaleString("en-NG", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
     return {
       isRegistered: true,
+      userId: user.id,
       name: `${user.firstName} ${user.lastName}`.trim(),
       firstName: user.firstName,
       accountNumber: acc.accountNumber,
-      balance: Number(acc.balance).toLocaleString("en-NG"),
+
+      balance: liveBalance,
+
       kycLevel: user.kycLevel || 1,
+
       recentTransactions: acc.transactions.map((t) => ({
         date: new Date(t.createdAt).toLocaleDateString("en-NG"),
         amount: t.amount.toLocaleString("en-NG"),
@@ -1159,63 +1170,70 @@ Welcome to Blocklo × 9PSB`,
     const history = await this.getHistory(from);
 
     // FAST PATH: VAS / BILLS / TRANSFER
-    // const vasReply = await VasIntentService.process(userId, message);
-    // if (vasReply) {
-    //   await this.saveMessage(from, "user", message);
-    //   await this.saveMessage(from, "assistant", vasReply);
-    //   await redis.setEx(cacheKey, 3600, JSON.stringify(vasReply));
-    //   return {text: vasReply};
-    // }
-    // === SMART AIRTIME & DATA FLOW — NIGERIA'S SMARTEST AI EVER ===
-    const vasContext = await redis.get(`vas:${from}`);
-    if (vasContext) {
-      try {
-        const ctx = JSON.parse(vasContext);
-
-        // SUPPORT BOTH AIRTIME AND DATA
-        if (
-          ctx.flow === "airtime" &&
-          ctx.network &&
-          ctx.network !== "UNKNOWN"
-        ) {
-          const networkEmoji =
-            { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
-              ctx.network
-            ] || "";
-          const reply = `${networkEmoji} Perfect! How much *${ctx.network}* **airtime** do you want?\n\n(₦100 - ₦50,000)`;
-
-          await this.saveMessage(from, "assistant", reply);
-          await redis.setEx(cacheKey, 3600, JSON.stringify(reply));
-          return { text: reply };
-        }
-
-        if (ctx.flow === "data" && ctx.network && ctx.network !== "UNKNOWN") {
-          const networkEmoji =
-            { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
-              ctx.network
-            ] || "";
-          const reply = `${networkEmoji} Great! How much *${ctx.network}* **data** do you want to buy?\n\nReply with amount (e.g. *₦500*) or say *plans* to see bundles`;
-
-          await this.saveMessage(from, "assistant", reply);
-          // When user says "buy airtime"
-await redis.setEx(`vas:${from}`, 1800, JSON.stringify({
-  flow: "airtime",
-  step: "awaiting_phone"
-}));
-return "Which number do you want to recharge?";
-
-// When user says "buy data"
-await redis.setEx(`vas:${from}`, 1800, JSON.stringify({
-  flow: "data",
-  step: "awaiting_phone"
-}));
-return "Which number do you want data for?";
-          return { text: reply };
-        }
-      } catch (err) {
-        logger.warn("Failed to parse vas context:", err);
-      }
+    const vasReply = await VasIntentService.process(userId, message, from);
+    if (vasReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(from, "assistant", vasReply);
+      await redis.setEx(cacheKey, 3600, JSON.stringify({ text: vasReply }));
+      return { text: vasReply };
     }
+    // const vasContext = await redis.get(`vas:${from}`);
+    // if (vasContext) {
+    //   try {
+    //     const ctx = JSON.parse(vasContext);
+
+    //     // SUPPORT BOTH AIRTIME AND DATA
+    //     if (
+    //       ctx.flow === "airtime" &&
+    //       ctx.network &&
+    //       ctx.network !== "UNKNOWN"
+    //     ) {
+    //       const networkEmoji =
+    //         { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
+    //           ctx.network
+    //         ] || "";
+    //       const reply = `${networkEmoji} Perfect! How much *${ctx.network}* **airtime** do you want?\n\n(₦100 - ₦50,000)`;
+
+    //       await this.saveMessage(from, "assistant", reply);
+    //       await redis.setEx(cacheKey, 3600, JSON.stringify(reply));
+    //       return { text: reply };
+    //     }
+
+    //     if (ctx.flow === "data" && ctx.network && ctx.network !== "UNKNOWN") {
+    //       const networkEmoji =
+    //         { MTN: "MTN", GLO: "GLO", AIRTEL: "AIRTEL", "9MOBILE": "9MOBILE" }[
+    //           ctx.network
+    //         ] || "";
+    //       const reply = `${networkEmoji} Great! How much *${ctx.network}* **data** do you want to buy?\n\nReply with amount (e.g. *₦500*) or say *plans* to see bundles`;
+
+    //       await this.saveMessage(from, "assistant", reply);
+    //       // When user says "buy airtime"
+    //       await redis.setEx(
+    //         `vas:${from}`,
+    //         1800,
+    //         JSON.stringify({
+    //           flow: "airtime",
+    //           step: "awaiting_phone",
+    //         })
+    //       );
+    //       return "Which number do you want to recharge?";
+
+    //       // When user says "buy data"
+    //       await redis.setEx(
+    //         `vas:${from}`,
+    //         1800,
+    //         JSON.stringify({
+    //           flow: "data",
+    //           step: "awaiting_phone",
+    //         })
+    //       );
+    //       return "Which number do you want data for?";
+    //       return { text: reply };
+    //     }
+    //   } catch (err) {
+    //     logger.warn("Failed to parse vas context:", err);
+    //   }
+    // }
 
     const billReply = await BillsIntentService.process(userId, message, from);
     if (billReply) {

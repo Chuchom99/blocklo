@@ -26,8 +26,10 @@ export async function handleBuyAirtime(userId, { phoneNumber, amount }) {
     });
 
     return `Airtime ₦${amountNum} sent to ${phoneNumber}! Ref: ${response.data?.transactionReference || "N/A"}`;
+    await redis.del(`vas:${context.from || from}`);
   } catch (err) {
     logger.error(`[AI VAS] Airtime failed: ${err.message}`);
+    await redis.del(`vas:${context.from || from}`);
     return `Failed to buy airtime: ${err.message}`;
   }
 }

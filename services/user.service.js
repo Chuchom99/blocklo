@@ -8,51 +8,59 @@ const SALT_ROUNDS = 10;
 
 class UserService {
   // utils/retry9psb.js  (or inside UserService)
-static async create9psbWalletWithRetry(walletData, maxRetries = 5) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await axios.post(
-        "https://api.9psb.com.ng/v1/wallets", // your actual endpoint
-        walletData,
-        { timeout: 15000 }
-      );
+  static async create9psbWalletWithRetry(walletData, maxRetries = 5) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await axios.post(
+          "https://api.9psb.com.ng/v1/wallets", // your actual endpoint
+          walletData,
+          { timeout: 15000 }
+        );
 
-      if (response.data.status === "SUCCESS" || response.data.accountNumber) {
-        logger.info(`9PSB wallet created on attempt ${attempt}`);
-        return response.data;
-      }
-    } catch (error) {
-      const isNetworkError =
-        !error.response || // no response = network/DNS/timeout
-        error.code === "ECONNABORTED" ||
-        error.code === "ENOTFOUND" ||
-        error.code === "ETIMEDOUT" ||
-        error.response?.status >= 500; // 5xx = server/network issue
+        if (response.data.status === "SUCCESS" || response.data.accountNumber) {
+          logger.info(`9PSB wallet created on attempt ${attempt}`);
+          return response.data;
+        }
+      } catch (error) {
+        const isNetworkError =
+          !error.response || // no response = network/DNS/timeout
+          error.code === "ECONNABORTED" ||
+          error.code === "ENOTFOUND" ||
+          error.code === "ETIMEDOUT" ||
+          error.response?.status >= 500; // 5xx = server/network issue
 
-      const isValidationError =
-        error.response?.status === 400 || 
-        error.response?.data?.message?.includes("Invalid") ||
-        error.response?.data?.message?.includes("format");
+        const isValidationError =
+          error.response?.status === 400 ||
+          error.response?.data?.message?.includes("Invalid") ||
+          error.response?.data?.message?.includes("format");
 
-      // ONLY retry on network/transient errors
-      if (isNetworkError && attempt < maxRetries) {
-        logger.warn(`9PSB network error (attempt ${attempt}/${maxRetries}), retrying in 3s...`);
-        await new Promise(r => setTimeout(r, 3000 * attempt)); // exponential backoff
-        continue;
-      }
+        // ONLY retry on network/transient errors
+        if (isNetworkError && attempt < maxRetries) {
+          logger.warn(
+            `9PSB network error (attempt ${attempt}/${maxRetries}), retrying in 3s...`
+          );
+          await new Promise((r) => setTimeout(r, 3000 * attempt)); // exponential backoff
+          continue;
+        }
 
-      // Permanent error (400, duplicate NIN, etc.) → don't retry
-      if (isValidationError) {
-        logger.error("9PSB validation error (no retry):", error.response?.data);
+        // Permanent error (400, duplicate NIN, etc.) → don't retry
+        if (isValidationError) {
+          logger.error(
+            "9PSB validation error (no retry):",
+            error.response?.data
+          );
+          throw error;
+        }
+
+        // If we get here, it's a real failure after retries
+        logger.error(
+          `9PSB wallet failed after ${maxRetries} attempts:`,
+          error.message
+        );
         throw error;
       }
-
-      // If we get here, it's a real failure after retries
-      logger.error(`9PSB wallet failed after ${maxRetries} attempts:`, error.message);
-      throw error;
     }
   }
-}
   /**
    * Create a new user
    * @param {Object} data - { email, phone, password, firstName, lastName, pin, whatsappId }
@@ -132,7 +140,7 @@ static async create9psbWalletWithRetry(walletData, maxRetries = 5) {
           address,
           ninUserId,
           ninUserId,
-          nin, 
+          nin,
           bvn,
 
           // nextOfKinName,
@@ -144,7 +152,6 @@ static async create9psbWalletWithRetry(walletData, maxRetries = 5) {
 
         const psbWallet = await PsbService.createWallet(walletData);
         accountNumber = psbWallet.accountNumber;
-
 
         // ✅ Store wallet details
         await prisma.account.create({
@@ -167,18 +174,17 @@ static async create9psbWalletWithRetry(walletData, maxRetries = 5) {
       }
 
       logger.info(`✅ User created successfully: ${email}`);
-          return {
-      ...user,
-      accountNumber, // This is what you wanted!
-    };
+      return {
+        ...user,
+        accountNumber, // This is what you wanted!
+      };
     } catch (error) {
       logger.error(`Error creating user: ${error.message}`);
       throw new Error(`Error creating user: ${error.message}`);
     }
   }
 
-  // services/context.service.js
-static async getUserContext(whatsappId) {
+ static async getUserContext(whatsappId) {
   const user = await prisma.user.findUnique({
     where: { whatsappId },
     include: {
@@ -193,6 +199,24 @@ static async getUserContext(whatsappId) {
   if (!user) return null;
 
   const account = user.accounts[0];
+  let psbBalance = 0;
+
+  // 🔥 FETCH REAL BALANCE FROM PSB
+  if (account?.accountNumber) {
+    try {
+      const walletData = await PsbService.walletEnquiry(account.accountNumber);
+
+      psbBalance =
+        walletData?.data?.data?.availableBalance ??
+        walletData?.data?.availableBalance ??
+        walletData?.availableBalance ??
+        0;
+
+      psbBalance = parseFloat(psbBalance);
+    } catch (err) {
+      console.error("Failed to fetch PSB balance:", err.message);
+    }
+  }
 
   return {
     userId: user.id,
@@ -201,15 +225,15 @@ static async getUserContext(whatsappId) {
     email: user.email,
     phone: user.phone,
     accountNumber: account?.accountNumber || null,
-    balance: account?.balance || 0,
+    balance: psbBalance, // 🔥 REAL PSB BALANCE HERE
     currency: "NGN",
     bvn: user.bvn ? `ending ${user.bvn.slice(-4)}` : null,
     nin: user.nin ? `ending ${user.nin.slice(-4)}` : null,
     tier: account?.tier || "Tier 1",
     isBlocked: user.isBlocked || false,
-    recentTransactions: user.transactions.map(t => ({
+    recentTransactions: user.transactions.map((t) => ({
       amount: t.amount,
-      type: t.type, // credit/debit
+      type: t.type,
       description: t.description,
       date: t.createdAt.toLocaleDateString("en-NG"),
       reference: t.reference,
@@ -217,102 +241,100 @@ static async getUserContext(whatsappId) {
   };
 }
 
-  
-//   static async createUser(data) {
-//   const {
-//     email, phone, password, firstName, lastName, pin, whatsappId,
-//     termsAgreed, gender, dateOfBirth, address, ninUserId, nin, bvn
-//   } = data;
 
-//   // Check duplicates
-//   const existingUser = await prisma.user.findFirst({
-//     where: { OR: [{ email }, { phone }, { whatsappId }] },
-//   });
-//   if (existingUser) {
-//     const field = existingUser.email === email ? "Email" : existingUser.phone === phone ? "Phone" : "WhatsApp";
-//     throw new Error(`${field} already registered`);
-//   }
+  //   static async createUser(data) {
+  //   const {
+  //     email, phone, password, firstName, lastName, pin, whatsappId,
+  //     termsAgreed, gender, dateOfBirth, address, ninUserId, nin, bvn
+  //   } = data;
 
-//   // Hash credentials
-//   const hashedPassword = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
-//   const hashedPin = pin ? await bcrypt.hash(pin, SALT_ROUNDS) : null;
+  //   // Check duplicates
+  //   const existingUser = await prisma.user.findFirst({
+  //     where: { OR: [{ email }, { phone }, { whatsappId }] },
+  //   });
+  //   if (existingUser) {
+  //     const field = existingUser.email === email ? "Email" : existingUser.phone === phone ? "Phone" : "WhatsApp";
+  //     throw new Error(`${field} already registered`);
+  //   }
 
-//   // RETRY LOGIC FOR 9PSB (only network/transient errors)
-//   const create9psbWalletWithRetry = async (walletData, maxRetries = 5) => {
-//     for (let i = 1; i <= maxRetries; i++) {
-//       try {
-//         const res = await axios.post("https://api.9psb.com.ng/v1/wallets", walletData, { timeout: 15000 });
-//         if (res.data.status === "SUCCESS" || res.data.accountNumber) {
-//           logger.info(`9PSB wallet created (attempt ${i})`);
-//           return res.data;
-//         }
-//       } catch (err) {
-//         const isNetworkError = !err.response || [500, 502, 503, 504].includes(err.response?.status) || err.code === "ECONNABORTED";
-//         const isValidationError = err.response?.status === 400;
+  //   // Hash credentials
+  //   const hashedPassword = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
+  //   const hashedPin = pin ? await bcrypt.hash(pin, SALT_ROUNDS) : null;
 
-//         if (isValidationError) {
-//           logger.error("9PSB validation error (no retry):", err.response?.data);
-//           throw err; // Permanent error → don't retry
-//         }
+  //   // RETRY LOGIC FOR 9PSB (only network/transient errors)
+  //   const create9psbWalletWithRetry = async (walletData, maxRetries = 5) => {
+  //     for (let i = 1; i <= maxRetries; i++) {
+  //       try {
+  //         const res = await axios.post("https://api.9psb.com.ng/v1/wallets", walletData, { timeout: 15000 });
+  //         if (res.data.status === "SUCCESS" || res.data.accountNumber) {
+  //           logger.info(`9PSB wallet created (attempt ${i})`);
+  //           return res.data;
+  //         }
+  //       } catch (err) {
+  //         const isNetworkError = !err.response || [500, 502, 503, 504].includes(err.response?.status) || err.code === "ECONNABORTED";
+  //         const isValidationError = err.response?.status === 400;
 
-//         if (isNetworkError && i < maxRetries) {
-//           logger.warn(`9PSB network error, retry ${i}/${maxRetries} in ${i * 2}s...`);
-//           await new Promise(r => setTimeout(r, i * 2000));
-//           continue;
-//         }
+  //         if (isValidationError) {
+  //           logger.error("9PSB validation error (no retry):", err.response?.data);
+  //           throw err; // Permanent error → don't retry
+  //         }
 
-//         logger.error(`9PSB wallet failed after ${maxRetries} attempts`);
-//         throw err;
-//       }
-//     }
-//   };
+  //         if (isNetworkError && i < maxRetries) {
+  //           logger.warn(`9PSB network error, retry ${i}/${maxRetries} in ${i * 2}s...`);
+  //           await new Promise(r => setTimeout(r, i * 2000));
+  //           continue;
+  //         }
 
-//   // MAIN TRANSACTION: ALL OR NOTHING
-//   return await prisma.$transaction(async (tx) => {
-//     // Step 1: Create user
-//     const user = await tx.user.create({
-//       data: {
-//         email, phone, password: hashedPassword, firstName, lastName,
-//         transactionPin: hashedPin, whatsappId, termsAgreed, gender,
-//         dateOfBirth, address, ninUserId, nin, bvn,
-//       },
-//     });
+  //         logger.error(`9PSB wallet failed after ${maxRetries} attempts`);
+  //         throw err;
+  //       }
+  //     }
+  //   };
 
-//     // Step 2: Try to create 9PSB wallet (with retry)
-//     try {
-//       const walletData = {
-//         firstName, lastName,
-//         accountName: `${firstName} ${lastName}`,
-//         email, phone, gender: gender === 0 ? "M" : "F",
-//         dateOfBirth, address, ninUserId, nin, bvn,
-//       };
+  //   // MAIN TRANSACTION: ALL OR NOTHING
+  //   return await prisma.$transaction(async (tx) => {
+  //     // Step 1: Create user
+  //     const user = await tx.user.create({
+  //       data: {
+  //         email, phone, password: hashedPassword, firstName, lastName,
+  //         transactionPin: hashedPin, whatsappId, termsAgreed, gender,
+  //         dateOfBirth, address, ninUserId, nin, bvn,
+  //       },
+  //     });
 
-//       const psbWallet = await create9psbWalletWithRetry(walletData);
+  //     // Step 2: Try to create 9PSB wallet (with retry)
+  //     try {
+  //       const walletData = {
+  //         firstName, lastName,
+  //         accountName: `${firstName} ${lastName}`,
+  //         email, phone, gender: gender === 0 ? "M" : "F",
+  //         dateOfBirth, address, ninUserId, nin, bvn,
+  //       };
 
-//       // Step 3: Save account
-//       await tx.account.create({
-//         data: {
-//           userId: user.id,
-//           accountName: psbWallet.accountName,
-//           accountNumber: psbWallet.accountNumber,
-//           balance: 0.0,
-//           currency: "NGN",
-//         },
-//       });
+  //       const psbWallet = await create9psbWalletWithRetry(walletData);
 
-//       logger.info(`FULL SUCCESS: User + 9PSB wallet created: ${psbWallet.accountNumber}`);
-//       return user;
+  //       // Step 3: Save account
+  //       await tx.account.create({
+  //         data: {
+  //           userId: user.id,
+  //           accountName: psbWallet.accountName,
+  //           accountNumber: psbWallet.accountNumber,
+  //           balance: 0.0,
+  //           currency: "NGN",
+  //         },
+  //       });
 
-//     } catch (walletError) {
-//       // WALLET FAILED → ROLLBACK ENTIRE USER
-//       logger.error(`9PSB failed → deleting user ${user.email}`);
-//       await tx.user.delete({ where: { id: user.id } }).catch(() => {});
-//       throw new Error("Wallet activation failed. Please try again later.");
-//     }
-//   });
-// }
+  //       logger.info(`FULL SUCCESS: User + 9PSB wallet created: ${psbWallet.accountNumber}`);
+  //       return user;
 
-
+  //     } catch (walletError) {
+  //       // WALLET FAILED → ROLLBACK ENTIRE USER
+  //       logger.error(`9PSB failed → deleting user ${user.email}`);
+  //       await tx.user.delete({ where: { id: user.id } }).catch(() => {});
+  //       throw new Error("Wallet activation failed. Please try again later.");
+  //     }
+  //   });
+  // }
 
   /**
    * Find user by email, phone, or WhatsApp ID

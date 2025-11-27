@@ -299,11 +299,25 @@ export class BillsIntentService {
   // === ELECTRICITY PAYMENT (meter + amount) ===
   // === ELECTRICITY: DIRECT PAYMENT (meter + amount) ===
   static async handleElectricityPayment(userId, message, from) {
-    const match = message.match(/(\d{10,11})\s*N?(\d{1,6})/i);
-    if (!match) return null;
+      const lower = message.toLowerCase();
 
-    const meterNo = match[1];
-    const amount = match[2];
+  // Only allow direct meter+amount if user explicitly mentioned electricity
+  const hasElectricityKeyword = /light|nepa|electricity|prepaid|meter|aedc|eko|ikeja/i.test(lower);
+  if (!hasElectricityKeyword) return null;
+
+  const match = message.match(/(\d{10,13})\s*[Nn]?(\d{3,})/);
+  if (!match) return null;
+
+  const meterNo = match[1].replace(/\D/g, '');
+  const amount = match[2];
+
+  if (meterNo.length < 10 || meterNo.length > 13) return null;
+
+    // const match = message.match(/(\d{10,11})\s*N?(\d{1,6})/i);
+    // if (!match) return null;
+
+    // const meterNo = match[1];
+    // const amount = match[2];
 
     try {
       const billersRes = await PsbVasService.getCategoryBillers("1");
@@ -362,35 +376,38 @@ export class BillsIntentService {
   // === PROCESS INTENT ===
 
   static async process(userId, message, from) {
-      // BLOCK BILLS IF USER IS IN AIRTIME OR DATA FLOW
-  const vasContext = await redis.get(`vas:${from}`);
-  if (vasContext) {
-    try {
-      const ctx = JSON.parse(vasContext);
-      if (ctx.flow === "airtime" || ctx.flow === "data") {
-        return null; // LET VAS HANDLE IT — DO NOT INTERFERE
+    // BLOCK BILLS IF USER IS IN AIRTIME OR DATA FLOW
+    const vasContext = await redis.get(`vas:${from}`);
+    if (vasContext) {
+      try {
+        const ctx = JSON.parse(vasContext);
+        if (ctx.flow === "airtime" || ctx.flow === "data") {
+          return null; // LET VAS HANDLE IT — DO NOT INTERFERE
+        }
+      } catch (err) {
+        // ignore
       }
-    } catch (err) {
-      // ignore
     }
-  }
 
-  // BLOCK IF USER IS IN ANY ONGOING FLOW (optional but smart)
-  const ongoingFlow = await redis.get(`flow:${from}`);
-  if (ongoingFlow) return null;
-    
+    // BLOCK IF USER IS IN ANY ONGOING FLOW (optional but smart)
+    const ongoingFlow = await redis.get(`flow:${from}`);
+    if (ongoingFlow) return null;
+
     if (
       message.toLowerCase().includes("save") ||
       message.toLowerCase().includes("beneficiar")
     ) {
       return null;
     }
-
+    if (await redis.get(`flow:${from}`)) return null;
 
     // INSTANT SHORTCUTS — NIGERIANS LOVE THIS
-if (message.toLowerCase().includes("light") || message.toLowerCase().includes("nepa")) {
-  return "Pay Electricity Bill\n\nReply with:\n• Meter number + amount (e.g. *12345678901 N5000*)\n• Or just meter (e.g. *12345678901*) and I’ll ask amount";
-}
+    if (
+      message.toLowerCase().includes("light") ||
+      message.toLowerCase().includes("nepa")
+    ) {
+      return "Pay Electricity Bill\n\nReply with:\n• Meter number + amount (e.g. *12345678901 N5000*)\n• Or just meter (e.g. *12345678901*) and I’ll ask amount";
+    }
 
     const handlers = [
       this.handleListCategories,

@@ -7,6 +7,7 @@ const router = express.Router();
 router.post("/wallet/enquiry", PsbController.walletEnquiry);
 router.post("/wallet/debit", PsbController.debitWallet);
 router.post("/wallet/credit", PsbController.creditWallet);
+router.post("/wallet/balance", PsbController.balanceEnquiry);
 
 router.post("/wallet/transactions", PsbController.transactionHistory);
 router.post("/wallet/requery", PsbController.transactionStatus);

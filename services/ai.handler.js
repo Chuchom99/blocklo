@@ -220,17 +220,5 @@ export async function handleTransactionHistory(userId) {
 /**
  * Handle "kyc status" command
  */
-export async function handleKycStatus(userId) {
-  if (!userId) return "Please register first.";
 
-  try {
-    const kyc = await UserService.getKycStatus(userId);
-    return kyc.status === "NOT_SUBMITTED"
-      ? "⚠️ You haven't submitted KYC yet. Use: kyc <bvn>"
-      : `✅ Your KYC status is ${kyc.status}`;
-  } catch (error) {
-    logger.error(`KYC status error: ${error.message}`);
-    return `❌ Could not retrieve KYC status: ${error.message}`;
-  }
-}
 

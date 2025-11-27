@@ -1,66 +1,58 @@
-// import AIService from "../services/ai.services.js";
-
-// class AiController {
-//   static async chat(req, res) {
-//     try {
-//       const { userId, message } = req.body;
-
-//       if (!userId || !message) {
-//         return res.status(400).json({ success: false, message: "userId and message are required" });
-//       }
-
-//       const response = await AIService(userId, message);
-
-//       return res.status(200).json({
-//         success: true,
-//         reply: response.reply,
-//         history: response.history,
-//       });
-//     } catch (err) {
-//       console.error("AI Conversation Error:", err.message);
-//       return res.status(500).json({ success: false, message: "Failed to process AI request" });
-//     }
-//   }
-// }
-
-// export default AiController;
 
 import { langchainService } from "../services/ai.services.js";
 import logger from "../config/logger.js";
 
-
-/**
- * @route   POST /api/ai/message
- * @desc    Process user message through AI (LangChain + 9PSB logic)
- * @body    { from, message, userId }
- */
 export const processAIChat = async (req, res) => {
   try {
-    const { from, message, userContext, userId } = req.body;
+    const { from, message, profileName = "User" } = req.body;
 
     if (!from || !message) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing 'from' or 'message' field" });
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: 'from' and 'message'",
+      });
     }
 
-    const aiResponse = await langchainService.processAIChat(from, message, userContext, userId);
+    // This is EXACTLY what WhatsAppService does
+    const normalizedFrom = from.toString().replace(/[^\d]/g, "").replace(/^234/, "234");
+
+    // CRITICAL: Let the AI service do the user lookup (same as real flow)
+    const userContext = await langchainService.getUserContext(normalizedFrom);
+
+    // If user doesn't exist, simulate unregistered flow
+    if (!userContext) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          from: normalizedFrom,
+          userMessage: message,
+          aiResponse: `Hi ${profileName.split(" ")[0]}! Welcome to *Blocklo × 9PSB*\n\nYou haven't created your wallet yet.\n\nReply with *create account* to open your bank account in 60 seconds!`,
+        },
+      });
+    }
+
+    // Now process exactly like real WhatsApp messages
+    const result = await langchainService.processAIChat(
+      normalizedFrom,
+      message.trim(),
+      userContext
+    );
 
     return res.status(200).json({
       success: true,
-      message: "AI processed message successfully",
       data: {
-        from,
-        userId,
+        from: normalizedFrom,
         userMessage: message,
-        aiResponse,
+        aiResponse: result.text || result,
+        userContext, // optional: for debugging
       },
     });
   } catch (error) {
-    logger.error(`AI Controller Error: ${error.message}`);
-    return res
-      .status(500)
-      .json({ success: false, message: "AI processing failed", error: error.message });
+    logger.error(`AI Controller Error: ${error.message}\nStack: ${error.stack}`);
+    return res.status(500).json({
+      success: false,
+      message: "AI processing failed",
+      error: error.message,
+    });
   }
 };
-

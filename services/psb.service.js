@@ -153,66 +153,96 @@ class PsbService {
   }
 
   // Add this method inside PsbService class
-static async walletEnquiry(accountNo) {
-  let token;
-  try {
-    token = await this.getWAASAuthToken();
-    if (!token) throw new Error("No WAAS token retrieved");
-  } catch (e) {
-    logger.error(`[PSB] Auth error for walletEnquiry: ${e.message}`);
-    return {
-      status: 'failed',
-      responseCode: '401',
-      responseDescription: 'Auth failed',
-      availableBalance: 0,
-    };
+  static async walletEnquiry(accountNo) {
+    let token;
+    try {
+      token = await this.getWAASAuthToken();
+      if (!token) throw new Error("No WAAS token retrieved");
+    } catch (e) {
+      logger.error(`[PSB] Auth error for walletEnquiry: ${e.message}`);
+      return {
+        status: "failed",
+        responseCode: "401",
+        responseDescription: "Auth failed",
+        availableBalance: 0,
+      };
+    }
+
+    const url = `${PSB_BASE_URL}/wallet_enquiry`;
+    const payload = { accountNo };
+
+    logger.info(`[PSB] → Requesting walletEnquiry for ${accountNo}`);
+    logger.debug(`[PSB] URL: ${url}`);
+    logger.debug(`[PSB] Payload: ${JSON.stringify(payload)}`);
+
+    try {
+      const { data } = await axios.post(url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        timeout: 10000,
+      });
+
+      // ✅ Log the entire response
+      logger.info(
+        `[PSB] ← walletEnquiry response (${accountNo}): ${JSON.stringify(
+          data,
+          null,
+          2
+        )}`
+      );
+
+      return data;
+    } catch (error) {
+      const resp = error.response?.data || {};
+      const statusCode = error.response?.status || "unknown";
+      const responseCode =
+        resp?.responseCode || resp?.data?.responseCode || "ERR";
+      const description =
+        resp?.responseDescription ||
+        resp?.data?.responseDescription ||
+        resp?.message ||
+        error.message;
+
+      // 🔥 Log everything about the failure
+      logger.error(
+        `[PSB] walletEnquiry failed [${statusCode}/${responseCode}] for ${accountNo}: ${description}`
+      );
+      logger.debug(`[PSB] Raw error data: ${JSON.stringify(resp, null, 2)}`);
+
+      return {
+        status: "failed",
+        responseCode,
+        responseDescription: description,
+        availableBalance:
+          resp?.data?.availableBalance ?? resp?.availableBalance ?? 0,
+        raw: resp,
+      };
+    }
   }
 
-  const url = `${PSB_BASE_URL}/wallet_enquiry`;
-  const payload = { accountNo };
+  static async getBalance(accountNo) {
+    try {
+      const data = await this.walletEnquiry(accountNo);
 
-  logger.info(`[PSB] → Requesting walletEnquiry for ${accountNo}`);
-  logger.debug(`[PSB] URL: ${url}`);
-  logger.debug(`[PSB] Payload: ${JSON.stringify(payload)}`);
+      const amount =
+        data?.data?.data?.availableBalance ??
+        data?.data?.availableBalance ??
+        data?.availableBalance ??
+        0;
 
-  try {
-    const { data } = await axios.post(url, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      timeout: 10000,
-    });
+      return parseFloat(amount);
+    } catch (err) {
+      logger.error("[PSB] Balance fetch error:", {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+      });
 
-    // ✅ Log the entire response
-    logger.info(`[PSB] ← walletEnquiry response (${accountNo}): ${JSON.stringify(data, null, 2)}`);
-
-    return data;
-  } catch (error) {
-    const resp = error.response?.data || {};
-    const statusCode = error.response?.status || 'unknown';
-    const responseCode = resp?.responseCode || resp?.data?.responseCode || 'ERR';
-    const description =
-      resp?.responseDescription ||
-      resp?.data?.responseDescription ||
-      resp?.message ||
-      error.message;
-
-    // 🔥 Log everything about the failure
-    logger.error(`[PSB] walletEnquiry failed [${statusCode}/${responseCode}] for ${accountNo}: ${description}`);
-    logger.debug(`[PSB] Raw error data: ${JSON.stringify(resp, null, 2)}`);
-
-    return {
-      status: 'failed',
-      responseCode,
-      responseDescription: description,
-      availableBalance: resp?.data?.availableBalance ?? resp?.availableBalance ?? 0,
-      raw: resp,
-    };
+      return 0; // fail-safe
+    }
   }
-}
-
-
 
   /**
    * Transfer funds between Wallet and Client Float Account
@@ -306,7 +336,7 @@ static async walletEnquiry(accountNo) {
 
       const amount = parseFloat(totalAmount);
 
-      // ✅ Check if transaction is successful
+      //  Check if transaction is successful
       const isSuccess =
         result?.data?.isSuccessful === true ||
         result?.data?.status?.toUpperCase?.() === "SUCCESS" ||
@@ -315,43 +345,49 @@ static async walletEnquiry(accountNo) {
       const transactionStatus = isSuccess ? "SUCCESS" : "FAILED";
 
       // 💾 Store transaction and update balance
-      await prisma.$transaction(async (tx) => {
-        // Always record the transaction with correct status
-        await tx.transaction.create({
-          data: {
-            userId: account.userId,
-            accountId: account.id,
-            amount,
-            type: type.toUpperCase(),
-            reference: transactionId,
-            status: transactionStatus, // 👈 Add this column to schema if not yet present
-            metadata: result.data ? JSON.stringify(result.data) : null,
-          },
-        });
-
-        // ✅ Only update balance when success
-        if (isSuccess) {
-          const newBalance =
-            type.toLowerCase() === "debit"
-              ? account.balance - amount
-              : account.balance + amount;
-
-          await tx.account.update({
-            where: { id: account.id },
-            data: { balance: newBalance },
+      await prisma.$transaction(
+        async (tx) => {
+          // Record transaction log
+          await tx.transaction.create({
+            data: {
+              userId: account.userId,
+              accountId: account.id,
+              amount,
+              type: type.toUpperCase(),
+              reference: transactionId,
+              status: transactionStatus, //  Add this column to schema if not yet present
+              metadata: result.data ? JSON.stringify(result.data) : null,
+            },
           });
 
-          logger.info(
-            `💰 Account ${accountNo} balance updated: ₦${account.balance} → ₦${newBalance}`
-          );
-        } else {
-          logger.warn(
-            `⚠️ Transaction failed, balance not updated for ${accountNo}`
-          );
-        }
-      });
+          // Only update balance on success
+          if (isSuccess) {
+            const newBalance =
+              type.toLowerCase() === "debit"
+                ? account.balance - amount
+                : account.balance + amount;
 
-      // 🎯 Return clear structured response
+            await tx.account.update({
+              where: { id: account.id },
+              data: { balance: newBalance },
+            });
+
+            logger.info(
+              `Account ${accountNo} ${type} successful → New balance: ₦${newBalance}`
+            );
+          } else {
+            logger.warn(
+              `Transfer FAILED → Balance NOT changed for ${accountNo}`
+            );
+          }
+        },
+        {
+          timeout: 30000, // ← THIS IS THE FIX
+          maxWait: 10000,
+        }
+      );
+
+      //  Return clear structured response
       return {
         success: isSuccess,
         message: isSuccess
@@ -531,36 +567,47 @@ static async walletEnquiry(accountNo) {
       const transactionRef = uuidv4().replace(/-/g, "").slice(0, 18);
       const orderRef = uuidv4().replace(/-/g, "").slice(0, 18);
 
+      // Generate distinct, compliant description (longer + unique)
+      const formattedDescription = `Blocklo Transfer: ${narration} to ${
+        destinationName || "Account"
+      } (${destinationAccount}) - Ref ${transactionRef.slice(0, 8)}`;
+
+      const senderFullName = senderName;
+
       const payload = {
-        transaction: { reference: transactionRef }, // ✅ fixed key
+        transaction: {
+          reference: transactionRef,
+        },
         order: {
           amount: String(amount),
-          status: "PENDING",
           currency: "NGN",
-          amountpaid: "0",
-          orderref: orderRef,
+          description: formattedDescription,
+          country: "NG",
         },
         customer: {
           account: {
-            number: accountNo,
-            bank: "999", // internal 9PSB code
-            type: "WALLET",
+            number: accountNo, // sender wallet
+            bank: destinationBankCode, // 6-digit beneficiary bank code
+            name: destinationName, // sender's name
+            senderaccountnumber: accountNo, // sender wallet
+            sendername: senderFullName, // sender's name
           },
         },
         merchant: {
           isFee: merchant.isFee,
-          merchantFeeAmount: merchant.merchantFeeAmount || "0",
-          merchantFeeAccount: merchant.merchantFeeAccount || "0000000000",
+          merchantFeeAccount: merchant.isFee
+            ? merchant.merchantFeeAccount
+            : "0000000000",
+          merchantFeeAmount: merchant.isFee ? merchant.merchantFeeAmount : "0",
         },
         transactionType: "OTHER_BANKS",
         narration,
-        description: narration, // required
-        senderAccountNumber: accountNo,
-        beneficiaryAccountNumber: destinationAccount,
-        beneficiaryBankCode: destinationBankCode,
-        beneficiaryName: destinationName || "",
-        name: senderName || "Wallet User",
       };
+
+      // Log payload length for debugging
+      logger.info(
+        `[9PSB] Description length: ${payload.order.description.length} chars`
+      );
 
       const token = await this.getWAASAuthToken();
       logger.info(
@@ -583,7 +630,9 @@ static async walletEnquiry(accountNo) {
       if (!data) throw new Error("Empty response from 9PSB");
       if (data.status?.toUpperCase() !== "SUCCESS" && data.success !== true) {
         throw new Error(
-          `Wallet to other banks failed: ${data.message || "Unknown error"}`
+          `Wallet to other banks failed: ${
+            data.message || "Unknown error"
+          } (Code: ${data.responseCode || "N/A"})`
         );
       }
 
@@ -616,8 +665,10 @@ static async walletEnquiry(accountNo) {
 
       const payload = {
         customer: {
-          accountNumber,
-          bankCode,
+          account: {
+            number: accountNumber,
+          },
+          bank: bankCode,
         },
       };
 
@@ -641,9 +692,7 @@ static async walletEnquiry(accountNo) {
         );
       }
 
-      logger.info(
-        `Other bank enquiry successful for ${accountNumber}@${bankCode}`
-      );
+      logger.info(`Other bank enquiry successful for ${accountNumber}@${bank}`);
       return data.data;
     } catch (error) {
       const status = error.response?.status;

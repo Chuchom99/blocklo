@@ -67,18 +67,19 @@ static async handleTransfer(userId, message, from) {
   }
 }
 
+
   // === HANDLE "save babe 0123456789 058" ===
-  static async handleSaveBeneficiary(userId, message) {
-    const match = message.match(/save\s+(.+?)\s+(\d{10})\s+(.+)/i);
-    if (!match) return null;
+static async handleSaveBeneficiary(userId, message) {
+  const match = message.match(/^save\s+([^\d]+)\s+(\d{10})\s+(.+)$/i);
+  if (!match) return null;
 
-    const [, alias, accountNo, bankInput] = match;
+  const [, alias, accountNo, bankInput] = match;
 
-    return await BeneficiaryService.save(userId, alias, accountNo, bankInput, message);
-  }
+  return await BeneficiaryService.save(userId, alias.trim(), accountNo, bankInput.trim());
+}
+
 
   // === HANDLE "my beneficiaries" ===
-  // === HANDLE "my beneficiaries" OR "save beneficiary" ===
   static async handleListBeneficiaries(userId, message) {
     const lower = message.toLowerCase();
     if (!lower.includes("beneficiar") && !lower.includes("save")) return null;

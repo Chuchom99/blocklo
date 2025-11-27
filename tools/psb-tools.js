@@ -1,7 +1,6 @@
 import {
   handleBalance,
   handleTransfer,
-  handleKycStatus,
   handleTransactionHistory,
 } from "../services/ai.handler.js";
 import { v4 as uuidv4 } from "uuid";
@@ -44,14 +43,6 @@ export const psbFunctions = [
     parameters: { type: "object", properties: {}, required: [] },
     handler: async (args, context) => {
       return await handleTransactionHistory(context.userId);
-    },
-  },
-  {
-    name: "get_kyc_status",
-    description: "Check user's KYC verification status",
-    parameters: { type: "object", properties: {}, required: [] },
-    handler: async (args, context) => {
-      return await handleKycStatus(context.userId);
     },
   },
   {
