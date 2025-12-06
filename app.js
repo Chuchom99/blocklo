@@ -2,6 +2,11 @@ import dotenv from "dotenv";
 import express from "express";
 import morgan from "morgan"; // for request logging
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load env variables
 dotenv.config();
@@ -36,6 +41,7 @@ app.use("/api/whatsapp", whatsappRoutes)
 app.use("/webhook", webhookRoutes);
 app.use("/api/psb/vas", psbVasRoutes);
 app.use("/debug", debugRoutes);
+app.use('/receipts', express.static(path.join(__dirname, 'public/receipts')));
 
 // Health check
 app.get("/health", (req, res) => {

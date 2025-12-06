@@ -40,18 +40,43 @@
 
 
 // scripts/set-all-to-level1.js
-import prisma from "./config/prisma.js";
+// import prisma from "./config/prisma.js";
 
-async function main() {
-  const result = await prisma.user.updateMany({
-    data: {
-      kycLevel: 1,
-    },
-  });
+// async function main() {
+//   const result = await prisma.user.updateMany({
+//     data: {
+//       kycLevel: 1,
+//     },
+//   });
 
-  console.log(`Updated ${result.count} users to KYC Level 1 (Tier 1)`);
-}
+//   console.log(`Updated ${result.count} users to KYC Level 1 (Tier 1)`);
+// }
 
-main()
-  .catch(e => console.error(e))
-  .finally(() => prisma.$disconnect());
+// main()
+//   .catch(e => console.error(e))
+//   .finally(() => prisma.$disconnect());
+
+
+import crypto from 'crypto';
+import fs from 'fs';
+
+const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048, // Required for Meta
+  publicKeyEncoding: {
+    type: 'spki',
+    format: 'pem'
+  },
+  privateKeyEncoding: {
+    type: 'pkcs8',
+    format: 'pem',
+    cipher: 'aes-256-cbc', // Optional encryption
+    passphrase: 'your-passphrase-here' // Change this; add to .env later
+  }
+});
+
+// Save files
+fs.writeFileSync('business_public_key.pem', publicKey);
+fs.writeFileSync('business_private_key.pem', privateKey);
+
+console.log('✅ Keys generated!');
+console.log('Public Key Preview:\n', publicKey.substring(0, 200) + '...');

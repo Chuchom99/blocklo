@@ -6,7 +6,12 @@ import logger from "../config/logger.js";
 /**
  * AI Handler: Buy Airtime
  */
-export async function handleBuyAirtime(userId, { phoneNumber, amount }) {
+// src/services/ai.vas.handler.js
+
+export async function handleBuyAirtime(context, args) {
+  const { userId, from } = context;
+  const { phoneNumber, amount } = args || {};  // ← args is the second param!
+
   try {
     const account = await prisma.account.findFirst({ where: { userId } });
     if (!account) return "No wallet found. Please register.";
@@ -15,8 +20,8 @@ export async function handleBuyAirtime(userId, { phoneNumber, amount }) {
     if (isNaN(amountNum) || amountNum < 100)
       return "Minimum airtime is ₦100.";
 
-    if (account.balance < amountNum)
-      return `Insufficient balance. You need ₦${amountNum}, have ₦${account.balance.toFixed(2)}`;
+    // if (account.balance < amountNum)
+    //   return `Insufficient balance. You need ₦${amountNum}, have ₦${account.balance.toFixed(2)}`;
 
     const response = await PsbVasService.buyAirtime({
       userId,
@@ -25,15 +30,18 @@ export async function handleBuyAirtime(userId, { phoneNumber, amount }) {
       amount: amountNum,
     });
 
-    return `Airtime ₦${amountNum} sent to ${phoneNumber}! Ref: ${response.data?.transactionReference || "N/A"}`;
-    await redis.del(`vas:${context.from || from}`);
+    // Now safe to delete
+    await redis.del(`vas:${from}`);
+
+    return `Airtime ₦${amountNum} sent to ${phoneNumber}! Ref: ${
+      response.data?.transactionReference || "N/A"
+    }`;
   } catch (err) {
     logger.error(`[AI VAS] Airtime failed: ${err.message}`);
-    await redis.del(`vas:${context.from || from}`);
+    await redis.del(`vas:${from}`);
     return `Failed to buy airtime: ${err.message}`;
   }
 }
-
 /**
  * AI Handler: Buy Data
  */
@@ -44,7 +52,7 @@ export async function handleBuyData(userId, { phoneNumber, productId }) {
 
     // Fetch data plans to get price
     const plansRes = await PsbVasService.getDataPlans(phoneNumber);
-    const plan = plansRes.data?.find(p => p.productId === productId);
+    const plan = plansRes.data?.find((p) => p.productId === productId);
     if (!plan) return "Invalid data plan. Use: list data plans";
 
     const amount = parseFloat(plan.amount);
@@ -59,7 +67,10 @@ export async function handleBuyData(userId, { phoneNumber, productId }) {
       amount,
     });
 
-    return `${plan.productName} sent to ${phoneNumber}! Ref: ${response.data?.transactionReference || "N/A"}`;
+    await redis.del(`vas:${from}`);
+    return `${plan.productName} sent to ${phoneNumber}! Ref: ${
+      response.data?.transactionReference || "N/A"
+    }`;
   } catch (err) {
     logger.error(`[AI VAS] Data failed: ${err.message}`);
     return `Failed to buy data: ${err.message}`;
@@ -78,9 +89,9 @@ export async function handleListDataPlans(userId, { phoneNumber }) {
 
     const list = plans
       .slice(0, 8)
-      .map(p => `• ${p.productName} - ₦${p.amount}`)
+      .map((p) => `• ${p.productName} - ₦${p.amount}`)
       .join("\n");
-
+    await redis.del(`vas:${from}`);
     return `Data Plans for ${phoneNumber}:\n${list}\nReply with: buy data [productId]`;
   } catch (err) {
     return "Could not fetch data plans.";
@@ -107,7 +118,10 @@ export async function handlePayBill(userId, { billerId, amount, fields }) {
       fields,
     });
 
-    return `Bill paid! ₦${amountNum} to ${fields?.meterNo || billerId}. Ref: ${response.data?.transactionReference || "N/A"}`;
+    await redis.del(`vas:${from}`);
+    return `Bill paid! ₦${amountNum} to ${fields?.meterNo || billerId}. Ref: ${
+      response.data?.transactionReference || "N/A"
+    }`;
   } catch (err) {
     logger.error(`[AI VAS] Bill pay failed: ${err.message}`);
     return `Bill payment failed: ${err.message}`;

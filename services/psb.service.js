@@ -171,9 +171,9 @@ class PsbService {
     const url = `${PSB_BASE_URL}/wallet_enquiry`;
     const payload = { accountNo };
 
-    logger.info(`[PSB] → Requesting walletEnquiry for ${accountNo}`);
-    logger.debug(`[PSB] URL: ${url}`);
-    logger.debug(`[PSB] Payload: ${JSON.stringify(payload)}`);
+    // logger.info(`[PSB] → Requesting walletEnquiry for ${accountNo}`);
+    // logger.debug(`[PSB] URL: ${url}`);
+    // logger.debug(`[PSB] Payload: ${JSON.stringify(payload)}`);
 
     try {
       const { data } = await axios.post(url, payload, {
@@ -185,13 +185,13 @@ class PsbService {
       });
 
       // ✅ Log the entire response
-      logger.info(
-        `[PSB] ← walletEnquiry response (${accountNo}): ${JSON.stringify(
-          data,
-          null,
-          2
-        )}`
-      );
+      // logger.info(
+      //   `[PSB] ← walletEnquiry response (${accountNo}): ${JSON.stringify(
+      //     data,
+      //     null,
+      //     2
+      //   )}`
+      // );
 
       return data;
     } catch (error) {
@@ -276,6 +276,7 @@ class PsbService {
         transactionId,
         narration,
         merchant: merchantPayload,
+        transactionType: "CREDIT_WALLET",
       };
 
       const url =
@@ -362,18 +363,18 @@ class PsbService {
 
           // Only update balance on success
           if (isSuccess) {
-            const newBalance =
-              type.toLowerCase() === "debit"
-                ? account.balance - amount
-                : account.balance + amount;
+            // const newBalance =
+            //   type.toLowerCase() === "debit"
+            //     ? account.balance - amount
+            //     : account.balance + amount;
 
-            await tx.account.update({
-              where: { id: account.id },
-              data: { balance: newBalance },
-            });
+            // await tx.account.update({
+            //   where: { id: account.id },
+            //   data: { balance: newBalance },
+            // });
 
             logger.info(
-              `Account ${accountNo} ${type} successful → New balance: ₦${newBalance}`
+              `Account ${accountNo} ${type} successful `
             );
           } else {
             logger.warn(
@@ -540,117 +541,227 @@ class PsbService {
    * @param {object} params.merchant { isFee, merchantFeeAmount?, merchantFeeAccount? }
    * @returns {Promise<object>}
    */
+  // static async walletToOtherBanks({
+  //   accountNo,
+  //   amount,
+  //   narration,
+  //   destinationAccount,
+  //   destinationBankCode,
+  //   destinationName,
+  //   merchant,
+  //   senderName,
+  // }) {
+  //   try {
+  //     if (
+  //       !accountNo ||
+  //       !amount ||
+  //       !narration ||
+  //       !destinationAccount ||
+  //       !destinationBankCode ||
+  //       !merchant
+  //     ) {
+  //       throw new Error(
+  //         "Missing required fields for wallet to other banks transfer"
+  //       );
+  //     }
+
+  //     const transactionRef = uuidv4().replace(/-/g, "").slice(0, 18);
+  //     const orderRef = uuidv4().replace(/-/g, "").slice(0, 18);
+
+  //     // Generate distinct, compliant description (longer + unique)
+  //     const formattedDescription = `Blocklo Transfer: ${narration} to ${
+  //       destinationName || "Account"
+  //     } (${destinationAccount}) - Ref ${transactionRef.slice(0, 8)}`;
+
+  //     const senderFullName = senderName;
+
+  //     const payload = {
+  //       transaction: {
+  //         reference: transactionRef,
+  //       },
+  //       order: {
+  //         amount: String(amount),
+  //         currency: "NGN",
+  //         description: formattedDescription,
+  //         country: "NG",
+  //       },
+  //       customer: {
+  //         account: {
+  //           number: destinationAccount, // Receipient account number
+  //           bank: destinationBankCode, // 6-digit beneficiary bank code
+  //           name: destinationName, // sender's name
+  //           senderaccountnumber: accountNo, // sender wallet
+  //           sendername: senderFullName, // sender's name
+  //         },
+  //       },
+  //       merchant: {
+  //         isFee: merchant.isFee,
+  //         merchantFeeAccount: merchant.isFee
+  //           ? merchant.merchantFeeAccount
+  //           : "0000000000",
+  //         merchantFeeAmount: merchant.isFee ? merchant.merchantFeeAmount : "0",
+  //       },
+  //       transactionType: "INTRA_BANK",
+  //       narration,
+  //       merchantBearsFee: false,
+  //     };
+
+  //     // Log payload length for debugging
+  //     logger.info(
+  //       `[9PSB] Description length: ${payload.order.description.length} chars`
+  //     );
+
+  //     const token = await this.getWAASAuthToken();
+  //     logger.info(
+  //       `[9PSB] Wallet→OtherBanks Payload: ${JSON.stringify(payload, null, 2)}`
+  //     );
+
+  //     const response = await axios.post(
+  //       `${PSB_BASE_URL}/wallet_other_banks`,
+  //       payload,
+  //       {
+  //         headers: {
+  //           "Content-Type": "application/json",
+  //           Authorization: `Bearer ${token}`,
+  //         },
+  //         timeout: 40000,
+  //       }
+  //     );
+
+  //     const data = response.data;
+  //     if (!data) throw new Error("Empty response from 9PSB");
+  //     if (data.status?.toUpperCase() !== "SUCCESS" && data.success !== true) {
+  //       throw new Error(
+  //         `Wallet to other banks failed: ${
+  //           data.message || "Unknown error"
+  //         } (Code: ${data.responseCode || "N/A"})`
+  //       );
+  //     }
+
+  //     logger.info(
+  //       `✅ Wallet to other banks transfer successful [${transactionRef}]`
+  //     );
+  //     return data;
+  //   } catch (error) {
+  //     const status = error.response?.status;
+  //     const detail = error.response?.data || error.message;
+  //     logger.error(
+  //       `❌ Error wallet to other banks [${
+  //         status || "no status"
+  //       }]: ${JSON.stringify(detail)}`
+  //     );
+  //     throw new Error(`Wallet to other banks failed: ${error.message}`);
+  //   }
+  // }
+
   static async walletToOtherBanks({
-    accountNo,
-    amount,
-    narration,
-    destinationAccount,
-    destinationBankCode,
-    destinationName,
-    merchant,
-    senderName,
-  }) {
-    try {
-      if (
-        !accountNo ||
-        !amount ||
-        !narration ||
-        !destinationAccount ||
-        !destinationBankCode ||
-        !merchant
-      ) {
-        throw new Error(
-          "Missing required fields for wallet to other banks transfer"
-        );
+  accountNo,
+  amount,
+  narration,
+  destinationAccount,
+  destinationBankCode,
+  destinationName,
+  senderName,
+  merchant = { isFee: false },
+  userId,      // Required for DB save
+  accountId,   // Required for DB save
+}) {
+  try {
+    // 1. Generate unique refs
+    const transactionRef = uuidv4().replace(/-/g, "").slice(0, 18);
+
+    // 2. Build 9PSB-compliant description
+    const formattedDescription = `Blocklo Transfer: ${narration} to ${
+      destinationName || "Account"
+    } (${destinationAccount}) - Ref ${transactionRef.slice(0, 8)}`;
+
+    // 3. Final 9PSB payload (exactly what they expect)
+    const payload = {
+      transaction: {
+        reference: transactionRef,
+      },
+      order: {
+        amount: String(amount),
+        currency: "NGN",
+        description: formattedDescription,
+        country: "NG",
+      },
+      customer: {
+        account: {
+          number: destinationAccount,
+          bank: destinationBankCode,
+          name: destinationName || "Recipient",
+          senderaccountnumber: accountNo,
+          sendername: senderName,
+        },
+      },
+      merchant: {
+        isFee: merchant.isFee || false,
+        merchantFeeAccount: merchant.isFee ? merchant.merchantFeeAccount : "0000000000",
+        merchantFeeAmount: merchant.isFee ? String(merchant.merchantFeeAmount || 0) : "0",
+      },
+      transactionType: "INTRA_BANK",
+      narration,
+      merchantBearsFee: false,
+    };
+
+    logger.info(`[9PSB] Transfer → ${destinationAccount} | ₦${amount} | Ref: ${transactionRef}`);
+
+    const token = await this.getWAASAuthToken();
+
+    const response = await axios.post(
+      `${PSB_BASE_URL}/wallet_other_banks`,  // Make sure this is correct in .env
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        timeout: 45000,
       }
+    );
 
-      const transactionRef = uuidv4().replace(/-/g, "").slice(0, 18);
-      const orderRef = uuidv4().replace(/-/g, "").slice(0, 18);
+    const result = response.data;
 
-      // Generate distinct, compliant description (longer + unique)
-      const formattedDescription = `Blocklo Transfer: ${narration} to ${
-        destinationName || "Account"
-      } (${destinationAccount}) - Ref ${transactionRef.slice(0, 8)}`;
-
-      const senderFullName = senderName;
-
-      const payload = {
-        transaction: {
-          reference: transactionRef,
-        },
-        order: {
-          amount: String(amount),
-          currency: "NGN",
-          description: formattedDescription,
-          country: "NG",
-        },
-        customer: {
-          account: {
-            number: accountNo, // sender wallet
-            bank: destinationBankCode, // 6-digit beneficiary bank code
-            name: destinationName, // sender's name
-            senderaccountnumber: accountNo, // sender wallet
-            sendername: senderFullName, // sender's name
+    // 4. SUCCESS → Save transaction to DB (non-blocking)
+    if (result?.status?.toUpperCase() === "SUCCESS" || result?.success === true) {
+      try {
+        await prisma.transaction.create({
+          data: {
+            userId,
+            accountId,
+            reference: transactionRef,                    // ← Real 9PSB ref
+            amount: parseFloat(amount),
+            type: "DEBIT",
+            status: "SUCCESS",
+            description: formattedDescription,
+            destinationAccount,
+            destinationName: destinationName || "Recipient",
+            metadata: result,   // Full response for audit/debugging
           },
-        },
-        merchant: {
-          isFee: merchant.isFee,
-          merchantFeeAccount: merchant.isFee
-            ? merchant.merchantFeeAccount
-            : "0000000000",
-          merchantFeeAmount: merchant.isFee ? merchant.merchantFeeAmount : "0",
-        },
-        transactionType: "OTHER_BANKS",
-        narration,
-      };
-
-      // Log payload length for debugging
-      logger.info(
-        `[9PSB] Description length: ${payload.order.description.length} chars`
-      );
-
-      const token = await this.getWAASAuthToken();
-      logger.info(
-        `[9PSB] Wallet→OtherBanks Payload: ${JSON.stringify(payload, null, 2)}`
-      );
-
-      const response = await axios.post(
-        `${PSB_BASE_URL}/wallet_other_banks`,
-        payload,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          timeout: 40000,
-        }
-      );
-
-      const data = response.data;
-      if (!data) throw new Error("Empty response from 9PSB");
-      if (data.status?.toUpperCase() !== "SUCCESS" && data.success !== true) {
-        throw new Error(
-          `Wallet to other banks failed: ${
-            data.message || "Unknown error"
-          } (Code: ${data.responseCode || "N/A"})`
-        );
+        });
+        logger.info(`[DB] Transaction saved → ${transactionRef}`);
+      } catch (dbError) {
+        logger.error(`[DB] Failed to save transaction (money already moved!):`, dbError);
+        // DO NOT throw — user already lost money
       }
-
-      logger.info(
-        `✅ Wallet to other banks transfer successful [${transactionRef}]`
-      );
-      return data;
-    } catch (error) {
-      const status = error.response?.status;
-      const detail = error.response?.data || error.message;
-      logger.error(
-        `❌ Error wallet to other banks [${
-          status || "no status"
-        }]: ${JSON.stringify(detail)}`
-      );
-      throw new Error(`Wallet to other banks failed: ${error.message}`);
     }
+
+    // 5. Return full result + our ref for receipt generation
+    return {
+      success: true,
+      transactionRef,
+      data: result,
+    };
+
+  } catch (error) {
+    const errMsg = error.response?.data?.message || error.message;
+    logger.error(`[9PSB] Transfer FAILED → ${destinationAccount} | ₦${amount} | Error: ${errMsg}`);
+    throw new Error(`Transfer failed: ${errMsg}`);
   }
+}
+
+  
 
   /**
    * Name enquiry for other bank account

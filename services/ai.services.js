@@ -864,9 +864,12 @@ import UserService from "./user.service.js";
 import crypto from "crypto";
 import { psbFunctions, psbVasFunctions } from "../tools/index.js";
 import {
-  VasIntentService,
-  BillsIntentService,
+  // VasIntentService,
+  // BillsIntentService,
   TransferIntentService,
+  TransactionHistoryService,
+  BeneficiaryIntentService,
+  VasIntentService,
 } from "../intent/index.js";
 import PsbService from "./psb.service.js";
 
@@ -989,18 +992,39 @@ class LangChainService {
       return this.startOnboarding(from, profileName);
     }
 
-    // USER NOT REGISTERED
+    // AUTO-TRIGGER ONBOARDING
+    if (
+      text.toLowerCase().includes("create account") ||
+      text.toLowerCase().includes("start") ||
+      text.toLowerCase().includes("register")
+    ) {
+      if (!userContext || !userContext.isRegistered) {
+        return this.startOnboarding(from, profileName);
+      }
+    }
     if (!userContext) {
+      if (
+        text.toLowerCase().includes("create account") ||
+        text.toLowerCase().includes("start") ||
+        text === "hi"
+      ) {
+        // Trigger onboarding directly
+        return this.startOnboarding(from, profileName);
+      }
+
       const welcomeText = `Hi ${
         profileName.split(" ")[0]
       }! Welcome to *Blocklo × 9PSB*\n\nYou haven't created your wallet yet.\n\nReply with *create account* to open your bank account in 60 seconds — right here on WhatsApp!`;
       return { text: welcomeText };
     }
 
-    // REGISTERED USER → FULL AI CHAT
-    // return await this.processAIChat(from, text || "hi", userContext);
-    const userId = userContext.userId || from; // fallback
-    return await this.processAIChat(from, text || "hi", userContext, userId);
+    // ONLY REGISTERED USERS GO TO AI
+    return await this.processAIChat(
+      from,
+      text || "hi",
+      userContext,
+      userContext.userId
+    );
   }
 
   // FULL ONBOARDING FLOW — NOW 100% IN AI
@@ -1168,15 +1192,16 @@ Welcome to Blocklo × 9PSB`,
     if (cached) return JSON.parse(cached);
 
     const history = await this.getHistory(from);
+    const safeUserId = userContext?.userId || userId;
 
     // FAST PATH: VAS / BILLS / TRANSFER
-    const vasReply = await VasIntentService.process(userId, message, from);
-    if (vasReply) {
-      await this.saveMessage(from, "user", message);
-      await this.saveMessage(from, "assistant", vasReply);
-      await redis.setEx(cacheKey, 3600, JSON.stringify({ text: vasReply }));
-      return { text: vasReply };
-    }
+    // const vasReply = await VasIntentService.process(userId, message, from);
+    // if (vasReply) {
+    //   await this.saveMessage(from, "user", message);
+    //   await this.saveMessage(from, "assistant", vasReply);
+    //   await redis.setEx(cacheKey, 3600, JSON.stringify({ text: vasReply }));
+    //   return { text: vasReply };
+    // }
     // const vasContext = await redis.get(`vas:${from}`);
     // if (vasContext) {
     //   try {
@@ -1235,14 +1260,40 @@ Welcome to Blocklo × 9PSB`,
     //   }
     // }
 
-    const billReply = await BillsIntentService.process(userId, message, from);
-    if (billReply) {
+    // const billReply = await BillsIntentService.process(userId, message, from);
+    // if (billReply) {
+    //   await this.saveMessage(from, "user", message);
+    //   await this.saveMessage(from, "assistant", billReply);
+    //   await redis.setEx(cacheKey, 3600, JSON.stringify(billReply));
+    //   return { text: billReply };
+    // }
+
+    const beneficiaryReply = await BeneficiaryIntentService.process(
+      safeUserId,
+      message,
+      from
+    );
+    if (beneficiaryReply) {
       await this.saveMessage(from, "user", message);
-      await this.saveMessage(from, "assistant", billReply);
-      await redis.setEx(cacheKey, 3600, JSON.stringify(billReply));
-      return { text: billReply };
+      await this.saveMessage(from, "assistant", beneficiaryReply);
+      await redis.setEx(
+        cacheKey,
+        3600,
+        JSON.stringify({ text: beneficiaryReply })
+      );
+      return { text: beneficiaryReply };
     }
 
+    //VAS INTENT
+    const vasReply = await VasIntentService.process(safeUserId, message, from);
+    if (vasReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(from, "assistant", vasReply);
+      await redis.setEx(cacheKey, 3600, JSON.stringify({ text: vasReply }));
+      return { text: vasReply };
+    }
+
+    // TRANSFER INTENT
     const transferReply = await TransferIntentService.process(
       userId,
       message,
@@ -1253,6 +1304,24 @@ Welcome to Blocklo × 9PSB`,
       await this.saveMessage(from, "assistant", transferReply);
       await redis.setEx(cacheKey, 3600, JSON.stringify(transferReply));
       return { text: transferReply };
+    }
+
+    // ────── TRANSACTION HISTORY  ──────
+
+    const historyReply = await TransactionHistoryService.process(
+      safeUserId,
+      message,
+      from
+    );
+    if (historyReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(
+        from,
+        "assistant",
+        typeof historyReply === "string" ? historyReply : historyReply.text
+      );
+      await redis.setEx(cacheKey, 3600, JSON.stringify(historyReply));
+      return historyReply;
     }
 
     const systemPrompt = `You are Blocklo Assistant — a smart Nigerian banking AI.
@@ -1281,7 +1350,11 @@ Greet by name. Confirm transfers. Never share full BVN/NIN.`;
     if (response.tool_calls?.length > 0) {
       const toolMessages = [];
       for (const toolCall of response.tool_calls) {
-        const result = await this.executeTool(toolCall, { from });
+        const result = await this.executeTool(toolCall, {
+          from,
+          userId: userContext.userId,
+          userContext,
+        });
         toolMessages.push({
           role: "tool",
           tool_call_id: toolCall.id,
@@ -1306,16 +1379,23 @@ Greet by name. Confirm transfers. Never share full BVN/NIN.`;
     return { text: aiReply };
   }
 
-  async executeTool(toolCall, context) {
+  async executeTool(toolCall, { from, userId, userContext }) {
     const { name, arguments: args } = toolCall;
     const tool = [...psbFunctions, ...psbVasFunctions].find(
       (t) => t.name === name
     );
-    if (!tool) return "Unknown command.";
+    if (!tool) return "Sorry, I don't know that command.";
+
     try {
-      return await tool.handler(args, context);
+      // Pass rich context
+      return await tool.handler(args, {
+        userId,
+        from,
+        userContext,
+      });
     } catch (err) {
-      return `Error: ${err.message}`;
+      logger.error(`Tool ${name} failed:`, err);
+      return `Sorry, that didn't work: ${err.message}`;
     }
   }
 }

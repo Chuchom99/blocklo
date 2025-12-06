@@ -65,15 +65,176 @@ class UserService {
    * Create a new user
    * @param {Object} data - { email, phone, password, firstName, lastName, pin, whatsappId }
    */
+  // static async createUser(data) {
+    
+  //   try {
+  //     const {
+  //       email,
+  //       phone,
+  //       password,
+  //       firstName,
+  //       lastName,
+  //       pin,
+  //       whatsappId,
+  //       termsAgreed,
+  //       gender,
+  //       dateOfBirth,
+  //       address,
+  //       ninUserId,
+  //       nin,
+  //       bvn,
+  //     } = data;
+
+  //     // 🔍 Check if email, phone, or WhatsApp ID exists
+  //     const existingUser = await prisma.user.findFirst({
+  //       where: {
+  //         OR: [{ email }, { phone }, { whatsappId: whatsappId || null }],
+  //       },
+  //     });
+  //     if (existingUser) {
+  //       const errorMessage =
+  //         existingUser.email === email
+  //           ? "Email already exists"
+  //           : existingUser.phone === phone
+  //           ? "Phone already exists"
+  //           : "WhatsApp ID already exists";
+  //       logger.error(`Failed to create user: ${errorMessage}`);
+  //       throw new Error(errorMessage);
+  //     }
+
+  //     // 🔐 Hash password & PIN
+  //     const hashedPassword = password
+  //       ? await bcrypt.hash(password, SALT_ROUNDS)
+  //       : null;
+  //     const hashedPin = pin ? await bcrypt.hash(pin, SALT_ROUNDS) : null;
+
+  //     // 👤 Create user record
+  //     const user = await prisma.user.create({
+  //       data: {
+  //         email,
+  //         phone,
+  //         password: hashedPassword,
+  //         firstName,
+  //         lastName,
+  //         transactionPin: hashedPin,
+  //         whatsappId,
+  //         termsAgreed,
+  //         gender,
+  //         dateOfBirth,
+  //         address,
+  //         ninUserId,
+  //         nin,
+  //         bvn,
+  //       },
+  //     });
+
+  //     // 🏦 Try creating 9PSB wallet
+  //     try {
+  //       const walletData = {
+  //         firstName,
+  //         lastName,
+  //         accountName: `${firstName} ${lastName}`,
+  //         email,
+  //         phone,
+  //         gender,
+  //         dateOfBirth,
+  //         address,
+  //         ninUserId,
+  //         ninUserId,
+  //         nin,
+  //         bvn,
+
+  //         // nextOfKinName,
+  //         // nextOfKinPhone,
+  //         // referralName,
+  //         // referralPhone,
+  //         // otherNames,
+  //       };
+
+  //       const psbWallet = await PsbService.createWallet(walletData);
+  //       accountNumber = psbWallet.accountNumber;
+
+  //       // ✅ Store wallet details
+  //       await prisma.account.create({
+  //         data: {
+  //           userId: user.id,
+  //           accountName: psbWallet.accountName,
+  //           accountNumber: psbWallet.accountNumber,
+  //           // balance: 0.0,
+  //           currency: psbWallet.currency || "NGN",
+  //         },
+  //       });
+
+  //       logger.info(
+  //         `9PSB wallet created for ${user.email}: ${psbWallet.accountNumber}`
+  //       );
+  //     } catch (walletError) {
+  //       logger.error(
+  //         `⚠️ Failed to create 9PSB wallet for ${user.email}: ${walletError.message}`
+  //       );
+  //     }
+
+  //     logger.info(`✅ User created successfully: ${email}`);
+  //     return {
+  //       ...user,
+  //       accountNumber, // This is what you wanted!
+  //     };
+  //   } catch (error) {
+  //     logger.error(`Error creating user: ${error.message}`);
+  //     throw new Error(`Error creating user: ${error.message}`);
+  //   }
+  // }
+
   static async createUser(data) {
-    try {
-      const {
+  let accountNumber = null; // ← DECLARE IT HERE
+
+  try {
+    const {
+      email,
+      phone,
+      password,
+      firstName,
+      lastName,
+      pin,
+      whatsappId,
+      termsAgreed,
+      gender,
+      dateOfBirth,
+      address,
+      ninUserId,
+      nin,
+      bvn,
+    } = data;
+
+    // Check duplicates
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ email }, { phone }, { whatsappId: whatsappId || null }],
+      },
+    });
+    if (existingUser) {
+      const errorMessage =
+        existingUser.email === email
+          ? "Email already exists"
+          : existingUser.phone === phone
+          ? "Phone already exists"
+          : "WhatsApp ID already exists";
+      throw new Error(errorMessage);
+    }
+
+    // Hash password & PIN
+    const hashedPassword = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
+    const hashedPin = pin ? await bcrypt.hash(pin, SALT_ROUNDS) : null;
+
+    // Create user
+    const user = await prisma.user.create({
+      data: {
         email,
         phone,
-        password,
+        password: hashedPassword,
         firstName,
         lastName,
-        pin,
+        transactionPin: hashedPin,
         whatsappId,
         termsAgreed,
         gender,
@@ -82,107 +243,53 @@ class UserService {
         ninUserId,
         nin,
         bvn,
-      } = data;
+      },
+    });
 
-      // 🔍 Check if email, phone, or WhatsApp ID exists
-      const existingUser = await prisma.user.findFirst({
-        where: {
-          OR: [{ email }, { phone }, { whatsappId: whatsappId || null }],
-        },
-      });
-      if (existingUser) {
-        const errorMessage =
-          existingUser.email === email
-            ? "Email already exists"
-            : existingUser.phone === phone
-            ? "Phone already exists"
-            : "WhatsApp ID already exists";
-        logger.error(`Failed to create user: ${errorMessage}`);
-        throw new Error(errorMessage);
-      }
-
-      // 🔐 Hash password & PIN
-      const hashedPassword = password
-        ? await bcrypt.hash(password, SALT_ROUNDS)
-        : null;
-      const hashedPin = pin ? await bcrypt.hash(pin, SALT_ROUNDS) : null;
-
-      // 👤 Create user record
-      const user = await prisma.user.create({
-        data: {
-          email,
-          phone,
-          password: hashedPassword,
-          firstName,
-          lastName,
-          transactionPin: hashedPin,
-          whatsappId,
-          termsAgreed,
-          gender,
-          dateOfBirth,
-          address,
-          ninUserId,
-          nin,
-          bvn,
-        },
-      });
-
-      // 🏦 Try creating 9PSB wallet
-      try {
-        const walletData = {
-          firstName,
-          lastName,
-          accountName: `${firstName} ${lastName}`,
-          email,
-          phone,
-          gender,
-          dateOfBirth,
-          address,
-          ninUserId,
-          ninUserId,
-          nin,
-          bvn,
-
-          // nextOfKinName,
-          // nextOfKinPhone,
-          // referralName,
-          // referralPhone,
-          // otherNames,
-        };
-
-        const psbWallet = await PsbService.createWallet(walletData);
-        accountNumber = psbWallet.accountNumber;
-
-        // ✅ Store wallet details
-        await prisma.account.create({
-          data: {
-            userId: user.id,
-            accountName: psbWallet.accountName,
-            accountNumber: psbWallet.accountNumber,
-            balance: 0.0,
-            currency: psbWallet.currency || "NGN",
-          },
-        });
-
-        logger.info(
-          `9PSB wallet created for ${user.email}: ${psbWallet.accountNumber}`
-        );
-      } catch (walletError) {
-        logger.error(
-          `⚠️ Failed to create 9PSB wallet for ${user.email}: ${walletError.message}`
-        );
-      }
-
-      logger.info(`✅ User created successfully: ${email}`);
-      return {
-        ...user,
-        accountNumber, // This is what you wanted!
+    // Try creating 9PSB wallet
+    try {
+      const walletData = {
+        firstName,
+        lastName,
+        accountName: `${firstName} ${lastName || ""}`.trim(),
+        email,
+        phone,
+        gender,
+        dateOfBirth,
+        address,
+        ninUserId,
+        nin,
+        bvn,
       };
-    } catch (error) {
-      logger.error(`Error creating user: ${error.message}`);
-      throw new Error(`Error creating user: ${error.message}`);
+
+      const psbWallet = await PsbService.createWallet(walletData);
+      accountNumber = psbWallet.accountNumber; // ← NOW IT WORKS
+
+      await prisma.account.create({
+        data: {
+          userId: user.id,
+          accountName: psbWallet.accountName || `${firstName} ${lastName || ""}`,
+          accountNumber: psbWallet.accountNumber,
+          currency: psbWallet.currency || "NGN",
+        },
+      });
+
+      logger.info(`9PSB wallet created for ${user.email}: ${psbWallet.accountNumber}`);
+    } catch (walletError) {
+      logger.error(`Failed to create 9PSB wallet for ${user.email}: ${walletError.message}`);
+      // Continue without wallet — user still created
     }
+
+    logger.info(`User created successfully: ${email}`);
+    return {
+      ...user,
+      accountNumber, // ← This now returns the real wallet number or null
+    };
+  } catch (error) {
+    logger.error(`Error creating user: ${error.message}`);
+    throw new Error(`Error creating user: ${error.message}`);
   }
+}
 
  static async getUserContext(whatsappId) {
   const user = await prisma.user.findUnique({

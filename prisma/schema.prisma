@@ -82,12 +82,21 @@ model Transaction {
   accountId     String
   amount        Float
   type          TransactionType
-  reference     String          @unique
-    status      String   @default("PENDING") 
-  metadata    Json?                       //  new field to store PSB response
+  reference     String?         // ← Make optional (best for external refs)
+  status        String          @default("PENDING")
+  description   String?
+  destinationAccount String?
+  destinationName    String?
+  balanceAfter  Float?
+  metadata      Json?           // ← Store full PSB response here
   createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
   user          User            @relation(fields: [userId], references: [id])
   account       Account         @relation(fields: [accountId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([reference])
 }
 
 model Beneficiary {

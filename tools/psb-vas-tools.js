@@ -6,65 +6,160 @@ import {
   handlePayBill,
 } from "../services/ai.vas.handler.js";
 
+// psb-vas-tools.js  ← FIX THIS FILE NOW
 export const psbVasFunctions = [
   {
     name: "buy_airtime",
-    description: "Buy airtime for any Nigerian number from user's wallet",
+    description: "Buy airtime for any Nigerian phone number using the user's wallet balance",
+    parameters: {
+      type: "object",
+      properties: {
+        phoneNumber: {
+          type: "string",
+          description: "The Nigerian phone number to recharge (e.g. 08012345678 or +2348012345678)"
+        },
+        amount: {
+          type: "number",
+          description: "Amount in Naira. Minimum 100, maximum 50000"
+        }
+      },
+      required: ["phoneNumber", "amount"],
+      additionalProperties: false   // ← THIS IS CRUCIAL
+    },
+    handler: async (args, context) => {
+      // Safety net — if args is missing, fail gracefully
+      if (!args || !args.phoneNumber || !args.amount) {
+        return "Please provide both phone number and amount. Example: Buy 500 airtime for 08030908709";
+      }
+      return await handleBuyAirtime(context, args);
+    },
+  },
+
+  {
+    name: "buy_data",
+    description: "Buy mobile data bundle for a Nigerian number",
     parameters: {
       type: "object",
       properties: {
         phoneNumber: { type: "string", description: "Recipient phone number" },
-        amount: { type: "number", description: "Amount in NGN (min 100)" },
-      },
-      required: ["phoneNumber", "amount"],
-    },
-    handler: async (args, context) => {
-      return await handleBuyAirtime(context.userId, args);
-    },
-  },
-  {
-    name: "buy_data",
-    description: "Buy data bundle using productId",
-    parameters: {
-      type: "object",
-      properties: {
-        phoneNumber: { type: "string" },
-        productId: { type: "string", description: "e.g., MTN_1GB" },
+        productId: { type: "string", description: "Exact productId from list_data_plans (e.g. MTN_1GB_DAILY)" }
       },
       required: ["phoneNumber", "productId"],
+      additionalProperties: false
     },
     handler: async (args, context) => {
-      return await handleBuyData(context.userId, args);
+      if (!args?.phoneNumber || !args?.productId) {
+        return "Please select a valid data plan first using 'show data plans'";
+      }
+      return await handleBuyData(context, args);
     },
   },
+
   {
     name: "list_data_plans",
-    description: "List available data plans for a phone number",
+    description: "Show available data bundles for a phone number",
     parameters: {
       type: "object",
       properties: {
-        phoneNumber: { type: "string" },
+        phoneNumber: { type: "string" }
       },
       required: ["phoneNumber"],
+      additionalProperties: false
     },
     handler: async (args, context) => {
-      return await handleListDataPlans(context.userId, args);
+      if (!args?.phoneNumber) {
+        return "Please provide a phone number to see data plans.";
+      }
+      return await handleListDataPlans(context, args);
     },
   },
+
   {
     name: "pay_bill",
-    description: "Pay electricity, DSTV, etc. using billerId and fields",
+    description: "Pay electricity bill, DSTV, GoTV, Startimes, etc.",
     parameters: {
       type: "object",
       properties: {
         billerId: { type: "string" },
         amount: { type: "number" },
-        fields: { type: "object", description: "e.g., { meterNo: '123456' }" },
+        fields: { 
+          type: "object", 
+          description: "Key-value pairs required by the biller (e.g. { meterNumber: '1234567890' })"
+        }
       },
       required: ["billerId", "amount", "fields"],
+      additionalProperties: false
     },
     handler: async (args, context) => {
-      return await handlePayBill(context.userId, args);
+      if (!args?.billerId || !args?.amount || !args?.fields) {
+        return "Incomplete bill information. Please try again.";
+      }
+      return await handlePayBill(context, args);
     },
-  },
+  }
 ];
+
+
+
+// export const psbVasFunctions = [
+//   {
+//     name: "buy_airtime",
+//     description: "Buy airtime for any Nigerian number from user's wallet",
+//     parameters: {
+//       type: "object",
+//       properties: {
+//         phoneNumber: { type: "string", description: "Recipient phone number" },
+//         amount: { type: "number", description: "Amount in NGN (min 100)" },
+//       },
+//       required: ["phoneNumber", "amount"],
+//     },
+//     handler: async (args, context) => {
+//       return await handleBuyAirtime(context, args);
+//     },
+//   },
+//   {
+//     name: "buy_data",
+//     description: "Buy data bundle using productId",
+//     parameters: {
+//       type: "object",
+//       properties: {
+//         phoneNumber: { type: "string" },
+//         productId: { type: "string", description: "e.g., MTN_1GB" },
+//       },
+//       required: ["phoneNumber", "productId"],
+//     },
+//     handler: async (args, context) => {
+//       return await handleBuyData(context.userId, args);
+//     },
+//   },
+//   {
+//     name: "list_data_plans",
+//     description: "List available data plans for a phone number",
+//     parameters: {
+//       type: "object",
+//       properties: {
+//         phoneNumber: { type: "string" },
+//       },
+//       required: ["phoneNumber"],
+//     },
+//     handler: async (args, context) => {
+//       return await handleListDataPlans(context.userId, args);
+//     },
+//   },
+//   {
+//     name: "pay_bill",
+//     description: "Pay electricity, DSTV, etc. using billerId and fields",
+//     parameters: {
+//       type: "object",
+//       properties: {
+//         billerId: { type: "string" },
+//         amount: { type: "number" },
+//         fields: { type: "object", description: "e.g., { meterNo: '123456' }" },
+//       },
+//       required: ["billerId", "amount", "fields"],
+//     },
+//     handler: async (args, context) => {
+//       return await handlePayBill(context.userId, args);
+//     },
+//   },
+// ];

@@ -55,7 +55,9 @@ import Joi from "joi";
 
 class UserController {
   // Register new user
+
   static async register(req, res) {
+    
     const schema = Joi.object({
       email: Joi.string().email().required(),
       phone: Joi.string()

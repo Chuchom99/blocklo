@@ -111,6 +111,7 @@
 import WhatsAppService from "../services/whatsapp.services.js";
 import logger from "../config/logger.js";
 import crypto from "crypto";
+import userController from "./user.controller.js";
 
 class WhatsAppController {
   static verifyWebhook(req, res) {
@@ -148,30 +149,95 @@ class WhatsAppController {
       res.sendStatus(500);
     }
   }
+;
 
-  static async handleFlow(req, res) {
-    try {
-      const { encrypted_flow_data, encrypted_aes_key, initial_vector } = req.body;
-      if (!encrypted_flow_data) {
-        const health = Buffer.from(JSON.stringify({ response: { status: "SUCCESS" } })).toString("base64");
-        return res.type("text/plain").send(health);
-      }
+static async handleFlow (req, res)  {
+  try {
+    const { encrypted_flow_data, encrypted_aes_key, initial_vector } = req.body;
 
-      const decrypted = WhatsAppService.decryptFlowData(encrypted_flow_data, encrypted_aes_key, initial_vector);
-      const result = await WhatsAppService.processFlow(decrypted.screen, decrypted.data, decrypted.flowToken);
-
-      const encrypted = WhatsAppService.encryptResponse(
-        JSON.stringify({ version: "3.0", data: { message: result } }),
-        decrypted.aesKey,
-        decrypted.iv
-      );
-
-      res.type("text/plain").send(encrypted);
-    } catch (err) {
-      const error = Buffer.from(JSON.stringify({ version: "3.0", error: { message: err.message } })).toString("base64");
-      res.type("text/plain").send(error);
+    // Health check (Meta pings this)
+    if (!encrypted_flow_data) {
+      return res.status(200).send("SUCCESS");
     }
+
+    // === DECRYPT ===
+    const decrypted = WhatsAppService.decryptFlowData(
+      encrypted_flow_data,
+      encrypted_aes_key,
+      initial_vector
+    );
+    console.log("🔓 Decrypted payload:", decrypted);
+    logger.info("[Flow] Decrypted payload:", decrypted);
+
+    // === EXTRACT FIELDS DIRECTLY (no .data, no .screen) ===
+    const {
+      first_name,
+      last_name,
+      email,
+      DateOfBirth,
+      address,
+      nin,
+      bvn,
+      pin,
+      confirm_pin,
+      gender,
+      terms_agreement,
+    } = decrypted;
+
+    const password = crypto.randomBytes(4).toString("hex")
+    // === VALIDATE REQUIRED FIELDS ===
+    if (!email || !first_name || !nin || !bvn || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields (email, name, NIN, BVN, PIN)",
+      });
+    }
+
+    if (pin !== confirm_pin) {
+      return res.status(400).json({
+        success: false,
+        message: "PINs do not match",
+      });
+    }
+
+    // === CREATE USER ===
+    const user = await UserService.createUser({
+      firstName: first_name.trim(),
+      lastName: last_name?.trim() || "User",
+      email: email.trim(),
+      dateOfBirth: DateOfBirth,
+      address: address?.trim(),
+      nin: nin.trim(),
+      bvn: bvn.trim(),
+      password:password,
+      pin: pin,
+      gender: gender === "Male" ? 0 : 1,
+      whatsappId: req.body.from || req.query.from, // from webhook context
+      phone: (req.body.from || req.query.from || "").replace("234", "0"),
+      termsAgreed: Boolean(terms_agreement),
+      kycLevel: 1,
+    });
+
+    // === SUCCESS RESPONSE (no encryption needed for final submit) ===
+    res.json({
+      success: true,
+      message: "Account created successfully!",
+      accountNumber: user.accountNumber || user.walletNumber,
+    });
+
+  } catch (err) {
+    logger.error("[Flow Error]", err.message, err.stack);
+    res.status(400).json({
+      success: false,
+      message: err.message || "Invalid request",
+    });
   }
+};
+
+
+
 }
 
 export default WhatsAppController;
+
+
