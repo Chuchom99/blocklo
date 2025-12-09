@@ -4,7 +4,8 @@ import fs from "fs";
 import path from "path";
 
 const RECEIPTS_DIR = "./public/receipts";
-if (!fs.existsSync(RECEIPTS_DIR)) fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
+if (!fs.existsSync(RECEIPTS_DIR))
+  fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
 
 export const generateVasReceipt = (data) => {
   return new Promise((resolve, reject) => {
@@ -29,13 +30,26 @@ export const generateVasReceipt = (data) => {
 
     // Details
     doc.fontSize(12).text(`Service: ${data.service}`, { continued: true });
-    doc.fontSize(18).font("Helvetica-Bold").fillColor("#2E7D32").text(` ₦${data.amount.toLocaleString()}`, { align: "right" });
+    doc
+      .fontSize(18)
+      .font("Helvetica-Bold")
+      .fillColor("#2E7D32")
+      .text(` ₦${data.amount.toLocaleString()}`, { align: "right" });
 
     doc.moveDown();
-    doc.fontSize(11)
+    doc
+      .fontSize(11)
       .text(`To: ${data.networkEmoji} ${data.phoneNumber}`)
       .text(`Account: ${data.accountNumber}`)
       .text(`Name: ${data.customerName}`);
+
+    if (data.token) {
+      doc
+        .fontSize(16)
+        .font("Helvetica-Bold")
+        .fillColor("#2E7D32")
+        .text(`TOKEN: ${data.token}`, 50, doc.y + 20);
+    }
 
     doc.moveDown(2);
     doc.fontSize(10).text("Thank you for using Blocklo!", { align: "center" });

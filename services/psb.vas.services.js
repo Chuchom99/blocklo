@@ -714,6 +714,9 @@ class PsbVasService {
   static async getBillCategories() {
     return await this.makeRequest("get", "/billspayment/categories");
   }
+  static async getCategoryBillers(categoryId) {
+    return await this.makeRequest("get", `/billspayment/billers/${categoryId}`);
+  }
 
   static async getBillers(categoryId) {
     return await this.makeRequest("get", `/billspayment/billers/${categoryId}`);
@@ -728,31 +731,48 @@ class PsbVasService {
   }
 
   static async payBill({ userId, accountId, billerId, amount, fields }) {
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-    });
+    const token = await this.getVASAuthToken();
+    let account;
+
+    if (accountId) {
+      account = await prisma.account.findUnique({ where: { id: accountId } });
+    } else if (fields?.debitAccount) {
+      account = await prisma.account.findUnique({
+        where: { accountNumber: fields.debitAccount },
+      });
+    } else {
+      throw new Error("Missing accountId or debitAccount in request payload");
+    }
+
     if (!account) throw new Error("Account not found");
 
-    const amountNum = parseFloat(amount);
-    const ref = uuidv4().replace(/-/g, "").slice(0, 18);
+    // ✅ Convert string to number for DB storage
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount)) throw new Error("Invalid amount format");
 
+    // if (account.balance < numericAmount)
+    //   throw new Error("Insufficient balance");
+
+    const transactionReference = uuidv4().replace(/-/g, "").slice(0, 18);
+
+    // ✅ Convert back to string only for PSB request
     const payload = {
       billerId,
-      amount: String(amountNum),
+      amount: String(amount), // PSB requires string
       accountNumber: account.accountNumber,
-      transactionReference: ref,
+      transactionReference,
       ...fields,
     };
 
+    // ✅ Save as float to DB
     const transaction = await prisma.transaction.create({
       data: {
         userId,
-        accountId,
-        amount: amountNum,
-        reference: ref,
+        accountId: account.id,
+        amount: numericAmount, // Prisma requires Float
+        reference: transactionReference,
         type: "DEBIT",
         status: "PENDING",
-        description: `Bill: ${fields.customerId || billerId}`,
       },
     });
 
@@ -765,24 +785,100 @@ class PsbVasService {
 
       await prisma.$transaction([
         prisma.account.update({
-          where: { id: accountId },
-          data: { status: "SUCCESS", metadata: response },
+          where: { id: account.id },
+          data: { balance: account.balance - numericAmount },
         }),
         prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: "SUCCESS", metadata: response },
+          data: {
+            status: "SUCCESS",
+            metadata: response.data || {},
+          },
         }),
       ]);
 
-      return { success: true, data: response, ref };
+      logger.info(`[VAS] Bill payment successful for ${account.accountNumber}`);
+      return response;
     } catch (error) {
       await prisma.transaction.update({
         where: { id: transaction.id },
         data: { status: "FAILED", metadata: { error: error.message } },
       });
+
+      logger.error(`[VAS] Bill payment failed: ${error.message}`);
       throw error;
     }
   }
+
+  // static async payBill({ userId, accountId, billerId, amount, fields }) {
+  //   // CRITICAL FIX: Get account safely
+  //   let account;
+
+  //   if (accountId) {
+  //     account = await prisma.account.findUnique({
+  //       where: { id: accountId },
+  //     });
+  //   }
+
+  //   // Fallback: if accountId missing, try to get user's primary account
+  //   if (!account) {
+  //     const user = await prisma.user.findUnique({
+  //       where: { id: userId },
+  //       include: { accounts: { take: 1 } },
+  //     });
+  //     account = user?.accounts?.[0];
+  //   }
+
+  //   if (!account) throw new Error("Account not found");
+
+  //   const amountNum = parseFloat(amount);
+  //   if (isNaN(amountNum) || amountNum < 100) throw new Error("Invalid amount");
+
+  //   const ref = `BILL${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+
+  //   const payload = {
+  //     billerId,
+  //     amount: String(amountNum),
+  //     accountNumber: account.accountNumber,
+  //     transactionReference: ref,
+  //     ...fields,
+  //   };
+
+  //   const transaction = await prisma.transaction.create({
+  //     data: {
+  //       userId,
+  //       accountId: account.id,
+  //       amount: amountNum,
+  //       reference: ref,
+  //       type: "DEBIT",
+  //       status: "PENDING",
+  //       description: `TV: ${fields.customerId || billerId}`,
+  //     },
+  //   });
+
+  //   try {
+  //     const response = await this.makeRequest("post", "/billspayment/pay", payload);
+
+  //     await prisma.$transaction([
+  //       prisma.account.update({
+  //         where: { id: account.id },
+  //         data: { balance: { decrement: amountNum } },
+  //       }),
+  //       prisma.transaction.update({
+  //         where: { id: transaction.id },
+  //         data: { status: "SUCCESS", metadata: response },
+  //       }),
+  //     ]);
+
+  //     return { success: true, data: response, ref, account };
+  //   } catch (error) {
+  //     await prisma.transaction.update({
+  //       where: { id: transaction.id },
+  //       data: { status: "FAILED", metadata: { error: error.message } },
+  //     });
+  //     throw error;
+  //   }
+  // }
 }
 
 export default PsbVasService;

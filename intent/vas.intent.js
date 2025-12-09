@@ -62,7 +62,6 @@ export class VasIntentService {
   }
 
   // ───── AIRTIME FLOW ─────
-  // ───── AIRTIME FLOW — FINAL FIXED VERSION ─────
   static async startAirtimeFlow(userId, from, message) {
     // Match ALL common patterns:
     // buy 500 airtime for 08141921035
@@ -233,47 +232,6 @@ export class VasIntentService {
       return `Failed to buy data: ${error.message}`;
     }
   }
-
-  // ───── DATA FLOW — FINAL WITH REAL PLANS & BUTTONS ─────
-  //   static async startDataFlow(userId, from, message) {
-  //     const lower = message.toLowerCase();
-
-  //     // Extract phone number from any message
-  //     const phoneMatch = message.match(/(\d{10,11})/);
-  //     let phone = null;
-
-  //     if (phoneMatch) {
-  //       phone = phoneMatch[1];
-  //       if (phone.startsWith("234")) phone = "0" + phone.slice(3);
-  //       if (phone.length === 10) phone = "0" + phone;
-  //     }
-
-  //     // If phone found → store and ask for plans
-  //     if (phone && /^0\d{10}$/.test(phone)) {
-  //       await redis.setEx(
-  //         `vas:${from}`,
-  //         1800,
-  //         JSON.stringify({
-  //           flow: "data",
-  //           step: "selecting_plan",
-  //           phone,
-  //         })
-  //       );
-
-  //       return await this.showDataPlans(userId, from, phone);
-  //     }
-
-  //     // No phone → ask for it
-  //     await redis.setEx(
-  //       `vas:${from}`,
-  //       1800,
-  //       JSON.stringify({
-  //         flow: "data",
-  //         step: "awaiting_phone",
-  //       })
-  //     );
-  //     return "Which number do you want data for? (e.g., 08012345678)";
-  //   }
 
   // ───── DATA FLOW — FINAL: ₦100 DATA + REAL PLANS + FALLBACK ─────
   static async startDataFlow(userId, from, message) {
@@ -546,77 +504,77 @@ export class VasIntentService {
     }
   }
 
-  // ───── BILL PAYMENT FLOW ─────
-  static async startBillFlow(userId, from, message) {
-    const match = message.match(
-      /(?:pay)\s*(dstv|gotv|electricity)\s+(\d+)\s*(?:for|to)?\s*(\w+)/i
-    );
-    if (match) {
-      const [, billType, amount, customerId] = match;
-      return await this.confirmBill(userId, from, billType, amount, customerId);
-    }
+  // // ───── BILL PAYMENT FLOW ─────
+  // static async startBillFlow(userId, from, message) {
+  //   const match = message.match(
+  //     /(?:pay)\s*(dstv|gotv|electricity)\s+(\d+)\s*(?:for|to)?\s*(\w+)/i
+  //   );
+  //   if (match) {
+  //     const [, billType, amount, customerId] = match;
+  //     return await this.confirmBill(userId, from, billType, amount, customerId);
+  //   }
 
-    await redis.setEx(
-      `vas:${from}`,
-      1800,
-      JSON.stringify({
-        flow: "bill",
-        step: "awaiting_biller",
-      })
-    );
-    return (
-      "Which bill do you want to pay?\n\n" +
-      "• `DSTV` (e.g., pay DSTV 5000 for 1234567890)\n" +
-      "• `GOTV`\n" +
-      "• `Electricity`"
-    );
-  }
+  //   await redis.setEx(
+  //     `vas:${from}`,
+  //     1800,
+  //     JSON.stringify({
+  //       flow: "bill",
+  //       step: "awaiting_biller",
+  //     })
+  //   );
+  //   return (
+  //     "Which bill do you want to pay?\n\n" +
+  //     "• `DSTV` (e.g., pay DSTV 5000 for 1234567890)\n" +
+  //     "• `GOTV`\n" +
+  //     "• `Electricity`"
+  //   );
+  // }
 
-  static async confirmBill(userId, from, billType, amount, customerId) {
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum < 100)
-      return "Minimum bill payment is ₦100.";
+  // static async confirmBill(userId, from, billType, amount, customerId) {
+  //   const amountNum = parseFloat(amount);
+  //   if (isNaN(amountNum) || amountNum < 100)
+  //     return "Minimum bill payment is ₦100.";
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { accounts: true },
-    });
-    if (!user?.accounts?.[0])
-      return "Account not found. Say *balance* to refresh.";
+  //   const user = await prisma.user.findUnique({
+  //     where: { id: userId },
+  //     include: { accounts: true },
+  //   });
+  //   if (!user?.accounts?.[0])
+  //     return "Account not found. Say *balance* to refresh.";
 
-    const accountId = user.accounts[0].id;
+  //   const accountId = user.accounts[0].id;
 
-    // Map billType to billerId (replace with real billerId from PsbVasService.getBillers)
-    const billerMap = {
-      dstv: "DSTV_001",
-      gotv: "GOTV_001",
-      electricity: "EKEDC_001",
-    };
-    const billerId = billerMap[billType.toLowerCase()];
-    if (!billerId) return "Invalid bill type. Try DSTV, GOTV, or Electricity.";
+  //   // Map billType to billerId (replace with real billerId from PsbVasService.getBillers)
+  //   const billerMap = {
+  //     dstv: "DSTV_001",
+  //     gotv: "GOTV_001",
+  //     electricity: "EKEDC_001",
+  //   };
+  //   const billerId = billerMap[billType.toLowerCase()];
+  //   if (!billerId) return "Invalid bill type. Try DSTV, GOTV, or Electricity.";
 
-    try {
-      const response = await PsbVasService.payBill({
-        userId,
-        accountId,
-        billerId,
-        amount: amountNum,
-        fields: { customerId },
-      });
+  //   try {
+  //     const response = await PsbVasService.payBill({
+  //       userId,
+  //       accountId,
+  //       billerId,
+  //       amount: amountNum,
+  //       fields: { customerId },
+  //     });
 
-      await redis.del(`vas:${from}`);
-      return (
-        `🎉 Bill payment successful!\n\n` +
-        `📺 ${billType.toUpperCase()} for ${customerId}\n` +
-        `💰 ₦${amountNum.toLocaleString()}\n` +
-        `Ref: ${response.ref}\n` +
-        `Date: ${new Date().toLocaleString("en-NG")}`
-      );
-    } catch (error) {
-      logger.error(`[VAS] Bill payment failed: ${error.message}`);
-      return `Failed to pay bill: ${error.message}. Try again.`;
-    }
-  }
+  //     await redis.del(`vas:${from}`);
+  //     return (
+  //       `🎉 Bill payment successful!\n\n` +
+  //       `📺 ${billType.toUpperCase()} for ${customerId}\n` +
+  //       `💰 ₦${amountNum.toLocaleString()}\n` +
+  //       `Ref: ${response.ref}\n` +
+  //       `Date: ${new Date().toLocaleString("en-NG")}`
+  //     );
+  //   } catch (error) {
+  //     logger.error(`[VAS] Bill payment failed: ${error.message}`);
+  //     return `Failed to pay bill: ${error.message}. Try again.`;
+  //   }
+  // }
 
   // ───── HANDLE FLOW (STATE MACHINE) ─────
   static async handleFlow(userId, from, message, flow) {

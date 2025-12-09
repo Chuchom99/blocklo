@@ -870,6 +870,8 @@ import {
   TransactionHistoryService,
   BeneficiaryIntentService,
   VasIntentService,
+  ElectricityBillService,
+  CableTVService,
 } from "../intent/index.js";
 import PsbService from "./psb.service.js";
 
@@ -1282,6 +1284,35 @@ Welcome to Blocklo × 9PSB`,
         JSON.stringify({ text: beneficiaryReply })
       );
       return { text: beneficiaryReply };
+    }
+    // After beneficiary, before transfer
+    const electricityReply = await ElectricityBillService.process(
+      userId,
+      message,
+      from
+    );
+    if (electricityReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(
+        from,
+        "assistant",
+        electricityReply.text || electricityReply
+      );
+      await redis.setEx(cacheKey, 3600, JSON.stringify(electricityReply));
+      return electricityReply;
+    }
+
+    // cable TV INTENT
+    const tvReply = await CableTVService.process(userId, message, from);
+    if (tvReply) {
+      await this.saveMessage(from, "user", message);
+      await this.saveMessage(
+        from,
+        "assistant",
+        tvReply.text || tvReply
+      );
+      await redis.setEx(cacheKey, 3600, JSON.stringify(tvReply));
+      return tvReply;
     }
 
     //VAS INTENT
