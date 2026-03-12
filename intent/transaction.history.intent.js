@@ -2,8 +2,6 @@ import prisma from "../config/prisma.js";
 import logger from "../config/logger.js";
 import { generateTransactionHistoryPDF } from "../utils/pdf.utils.js";
 
-// services/transaction.history.service.js
-
 class TransactionHistoryService {
   static async process(userId, message, from) {
     const lower = message.toLowerCase().trim();
@@ -32,7 +30,7 @@ class TransactionHistoryService {
         userId,
         from,
         message,
-        page || 2
+        page || 2,
       ); // ← pass message
     }
 
@@ -94,7 +92,7 @@ class TransactionHistoryService {
       }
 
       let text = `*Your Transaction History* (Page ${page} of ${Math.ceil(
-        total / limit
+        total / limit,
       )})\n\n`;
       txns.forEach((t, i) => {
         const sign = t.type === "CREDIT" ? "+" : "−";

@@ -5,7 +5,7 @@ const querystring = require('querystring');
 
 class WhatsAppKeyUploader {
   constructor() {
-    this.wabaId = '1896313210962141'; // Hardcoded from your logs (add to .env if dynamic)
+    this.wabaId = '1896313210962141'; 
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
     this.apiVersion = 'v20.0'; // Matches your request
     this.endpoint = `https://graph.facebook.com/${this.apiVersion}/${this.wabaId}/whatsapp_business_encryption`;

@@ -24,8 +24,14 @@ export const psbFunctions = [
       type: "object",
       properties: {
         amount: { type: "number", description: "Amount to transfer" },
-        destination_account: { type: "string", description: "Recipient account number" },
-        bank_code: { type: "string", description: "Optional: 3-digit bank code (e.g., 011 for GTB)" },
+        destination_account: {
+          type: "string",
+          description: "Recipient account number",
+        },
+        bank_code: {
+          type: "string",
+          description: "Optional: 3-digit bank code (e.g., 011 for GTB)",
+        },
         narration: { type: "string", description: "Optional memo" },
       },
       required: ["amount", "destination_account"],
@@ -58,66 +64,69 @@ export const psbFunctions = [
     },
   },
 
-{
-  name: "list_beneficiaries",
-  description: "List all saved beneficiaries for the user",
-  parameters: { type: "object", properties: {}, required: [] },
-  handler: async (args, { from }) => {
-    const normalized = from.replace(/[^\d]/g, "").replace(/^234/, "234");
+  {
+    name: "list_beneficiaries",
+    description: "List all saved beneficiaries for the user",
+    parameters: { type: "object", properties: {}, required: [] },
+    handler: async (args, { from }) => {
+      const normalized = from.replace(/[^\d]/g, "").replace(/^234/, "234");
 
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { whatsappId: normalized },
-          { phone: normalized.replace(/^234/, "0") },
-        ],
-      },
-      include: {
-        beneficiaries: {
-          orderBy: { createdAt: "desc" },
-          select: {
-            alias: true,
-            accountNo: true,
-            bankName: true,
-            accountName: true,
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { whatsappId: normalized },
+            { phone: normalized.replace(/^234/, "0") },
+          ],
+        },
+        include: {
+          beneficiaries: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              alias: true,
+              accountNo: true,
+              bankName: true,
+              accountName: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!user || user.beneficiaries.length === 0) {
-      return "You have no saved beneficiaries yet.\n\nTo save one, say:\n*send 5000 to 1234567890 GTBank*";
-    }
+      if (!user || user.beneficiaries.length === 0) {
+        return "You have no saved beneficiaries yet.\n\nTo save one, say:\n*send 5000 to 1234567890 GTBank*";
+      }
 
-    const list = user.beneficiaries
-      .map((b, i) => 
-        `${i + 1}. *${b.alias}*\n   ${b.accountName}\n   ${b.accountNo} • ${b.bankName}`
-      )
-      .join("\n\n");
+      const list = user.beneficiaries
+        .map(
+          (b, i) =>
+            `${i + 1}. *${b.alias}*\n   ${b.accountName}\n   ${b.accountNo} • ${b.bankName}`,
+        )
+        .join("\n\n");
 
-    return `Your Saved Beneficiaries:\n\n${list}\n\nReply with alias to send money fast!\n(e.g. *send 2000 to mom*)`;
+      return `Your Saved Beneficiaries:\n\n${list}\n\nReply with alias to send money fast!\n(e.g. *send 2000 to mom*)`;
+    },
   },
-},
-//  delete beneficiary
-{
-  name: "delete_beneficiary",
-  description: "Delete a saved beneficiary by alias",
-  parameters: {
-    type: "object",
-    properties: { alias: { type: "string" } },
-    required: ["alias"],
-  },
-  handler: async ({ alias }, { from }) => {
-    const result = await prisma.beneficiary.deleteMany({
-      where: {
-        user: { whatsappId: from.replace(/[^\d]/g, "").replace(/^234/, "234") },
-        alias: { equals: alias, mode: "insensitive" },
-      },
-    });
+  //  delete beneficiary
+  {
+    name: "delete_beneficiary",
+    description: "Delete a saved beneficiary by alias",
+    parameters: {
+      type: "object",
+      properties: { alias: { type: "string" } },
+      required: ["alias"],
+    },
+    handler: async ({ alias }, { from }) => {
+      const result = await prisma.beneficiary.deleteMany({
+        where: {
+          user: {
+            whatsappId: from.replace(/[^\d]/g, "").replace(/^234/, "234"),
+          },
+          alias: { equals: alias, mode: "insensitive" },
+        },
+      });
 
-    return result.count > 0
-      ? `${alias} has been removed from your beneficiaries.`
-      : `No beneficiary found with alias "${alias}"`;
+      return result.count > 0
+        ? `${alias} has been removed from your beneficiaries.`
+        : `No beneficiary found with alias "${alias}"`;
+    },
   },
-}
 ];

@@ -38,12 +38,10 @@ export class ElectricityBillService {
     return await this.showDiscos(userId, from);
   }
 
-  // services/electricity.bill.service.js → showDiscos()
-
   static async showDiscos(userId, from) {
     try {
       const response = await PsbVasService.getCategoryBillers(
-        ELECTRICITY_CATEGORY_ID
+        ELECTRICITY_CATEGORY_ID,
       );
       const billers = response.data || [];
 
@@ -116,7 +114,7 @@ export class ElectricityBillService {
         selectedBiller = discos.find(
           (b) =>
             b.name.toLowerCase().includes(message.toLowerCase()) ||
-            b.id.toLowerCase().includes(message.toLowerCase())
+            b.id.toLowerCase().includes(message.toLowerCase()),
         );
       }
 
@@ -131,7 +129,7 @@ export class ElectricityBillService {
           step: "enter_meter",
           billerId: selectedBiller.id,
           billerName: selectedBiller.name,
-        })
+        }),
       );
 
       return `You've selected *${selectedBiller.name}*\n\nPlease send your meter number (e.g., 12345678901)`;
@@ -150,7 +148,7 @@ export class ElectricityBillService {
           ...flow,
           step: "enter_amount",
           meterNumber: meter,
-        })
+        }),
       );
 
       return `Meter: *${meter}*\n\nHow much do you want to buy? (e.g., ₦5000)`;
@@ -187,9 +185,8 @@ export class ElectricityBillService {
         amount: String(flow.amount),
       };
 
-      const validateResponse = await PsbVasService.validatePayment(
-        validatePayload
-      );
+      const validateResponse =
+        await PsbVasService.validatePayment(validatePayload);
 
       if (!validateResponse.data?.customerName) {
         return `Meter ${flow.meterNumber} not found or invalid. Please check and try again.`;

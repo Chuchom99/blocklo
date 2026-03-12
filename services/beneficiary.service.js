@@ -1,5 +1,4 @@
 // services/beneficiary.service.js
-
 import prisma from "../config/prisma.js";
 import { BankService } from "./bank.service.js";
 import PsbService from "./psb.service.js";

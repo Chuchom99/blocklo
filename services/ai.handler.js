@@ -74,7 +74,6 @@ export async function handleTransfer(from, message, userId) {
 /**
  * Fetch user wallet balance — always from live 9PSB
  */
-
 export async function handleBalance(userId) {
   try {
     if (!userId) return "Please register first.";
@@ -109,7 +108,6 @@ export async function handleBalance(userId) {
     return "⚠️ Could not fetch your wallet balance at the moment.";
   }
 }
-
 
 
 export async function handleTransactionHistory(userId) {
@@ -217,8 +215,6 @@ export async function handleTransactionHistory(userId) {
   }
 }
 
-/**
- * Handle "kyc status" command
- */
+
 
 

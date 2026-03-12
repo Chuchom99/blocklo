@@ -38,13 +38,13 @@ describe("User Routes", () => {
 
     // Verify PIN request
     const pinRes = await request(app)
-      .post("/api/users/verify-pin") // POST request if API expects body
+      .post("/api/users/verify-pin") 
       .set("Authorization", `Bearer ${token}`)
       .send({
         pin: "1234", // replace with your test PIN
       });
 
     expect(pinRes.statusCode).toBe(200);
-    expect(pinRes.body.success).toBe(true); // check your actual response property
+    expect(pinRes.body.success).toBe(true); 
   });
 });

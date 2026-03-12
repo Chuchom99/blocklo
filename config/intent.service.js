@@ -1,35 +1,3 @@
-// import logger from "../config/logger.js";
-
-// const INTENTS = {
-//   balance: [/balance/i, /how much/i, /funds?/i, /wallet/i],
-//   transfer: [/send/i, /transfer/i, /pay/i],
-//   history: [/history/i, /transaction/i, /statement/i],
-//   kyc: [/kyc/i, /verify/i, /bvn/i],
-//   register: [/register/i, /sign up/i, /create account/i],
-//   help: [/help/i, /menu/i, /options/i],
-// };
-
-// export class IntentService {
-//   static detect(message) {
-//     const lower = message.toLowerCase();
-
-//     for (const [intent, patterns] of Object.entries(INTENTS)) {
-//       if (patterns.some(p => p.test(lower))) {
-//         logger.info(`[Intent] Detected: ${intent}`);
-//         return { intent, confidence: 1.0 };
-//       }
-//     }
-
-//     return { intent: "smalltalk", confidence: 0 };
-//   }
-
-//   static extractTransfer(message) {
-//     const match = message.match(/(\d+(?:\.\d+)?)\s+to\s+(\d+)/i);
-//     if (!match) return null;
-//     return { amount: match[1], account: match[2] };
-//   }
-// }
-
 // src/services/intent.service.js
 import logger from "../config/logger.js";
 

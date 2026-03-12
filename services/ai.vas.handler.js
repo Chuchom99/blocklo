@@ -6,8 +6,6 @@ import logger from "../config/logger.js";
 /**
  * AI Handler: Buy Airtime
  */
-// src/services/ai.vas.handler.js
-
 export async function handleBuyAirtime(context, args) {
   const { userId, from } = context;
   const { phoneNumber, amount } = args || {};  // ← args is the second param!

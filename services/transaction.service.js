@@ -3,6 +3,7 @@ import walletService from "./wallet.service.js";
 import bcrypt from "bcryptjs";
 
 class TransactionService {
+  
   // Verify PIN
   async verifyPin(userId, pin) {
     const user = await prisma.user.findUnique({

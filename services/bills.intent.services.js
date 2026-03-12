@@ -103,6 +103,7 @@ export class BillsIntentService {
       return "Could not fetch plans.";
     }
   }
+  
   // === 4. CAPTURE SMARTCARD ===
   static async handleCaptureSmartcard(userId, message, from) {
     const ctx = await redis.get(`bill_context:${from}`);
@@ -184,7 +185,6 @@ export class BillsIntentService {
   }
 
   // === 6. FINAL PAYMENT ===
-  // === 6. FINAL PAYMENT (CABLE) ===
   static async handlePayBill(userId, message, from) {
     if (!message.toLowerCase().includes("yes")) return null;
 
@@ -220,6 +220,7 @@ export class BillsIntentService {
       return `Payment failed: ${err.message}`;
     }
   }
+
   // === ELECTRICITY: CAPTURE METER ===
   static async handleElectricityMeter(userId, message, from) {
     const match = message.match(/^(\d{10,11})$/);
@@ -296,7 +297,6 @@ export class BillsIntentService {
     }
   }
 
-  // === ELECTRICITY PAYMENT (meter + amount) ===
   // === ELECTRICITY: DIRECT PAYMENT (meter + amount) ===
   static async handleElectricityPayment(userId, message, from) {
       const lower = message.toLowerCase();
@@ -374,7 +374,6 @@ export class BillsIntentService {
   }
 
   // === PROCESS INTENT ===
-
   static async process(userId, message, from) {
     // BLOCK BILLS IF USER IS IN AIRTIME OR DATA FLOW
     const vasContext = await redis.get(`vas:${from}`);

@@ -150,7 +150,6 @@ class PsbController {
     }
   }
 
-
   static async transactionHistory(req, res) {
     const schema = Joi.object({
       accountNo: Joi.string().required(),
@@ -350,9 +349,6 @@ class PsbController {
       res.status(500).json({ success: false, message: err.message || "Failed to fetch wallet" });
     }
   }
-
-  
-
 }
 
 export default PsbController;

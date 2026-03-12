@@ -97,7 +97,7 @@ export class VasIntentService {
       JSON.stringify({
         flow: "airtime",
         step: "awaiting_phone",
-      })
+      }),
     );
     return "Which number do you want to buy airtime for? (e.g., 08012345678)";
   }
@@ -120,9 +120,8 @@ export class VasIntentService {
     const account = user.accounts[0];
 
     // Use 9PSB's official network detection
-    const { name: networkName, emoji } = await PsbVasService.detectNetwork(
-      phoneNumber
-    );
+    const { name: networkName, emoji } =
+      await PsbVasService.detectNetwork(phoneNumber);
 
     try {
       const response = await PsbVasService.buyAirtime({
@@ -167,9 +166,8 @@ export class VasIntentService {
   }
 
   static async selectDataPlan(userId, from, dataSize, phoneNumber) {
-    const { name: networkName, emoji } = await PsbVasService.detectNetwork(
-      phoneNumber
-    );
+    const { name: networkName, emoji } =
+      await PsbVasService.detectNetwork(phoneNumber);
 
     let amount, productId;
     const size = dataSize.toLowerCase();
@@ -239,7 +237,7 @@ export class VasIntentService {
 
     // 1. INSTANT ₦100 DATA (MOST COMMON IN NIGERIA)
     const instantMatch = message.match(
-      /(?:buy|get|want)\s*(?:to\s*)?(\d+)\s*(?:data|naira\s*data|data\s*naira)\s*(?:for|to)?\s*(\d{10,11})/i
+      /(?:buy|get|want)\s*(?:to\s*)?(\d+)\s*(?:data|naira\s*data|data\s*naira)\s*(?:for|to)?\s*(\d{10,11})/i,
     );
 
     if (instantMatch) {
@@ -279,7 +277,7 @@ export class VasIntentService {
           flow: "data",
           step: "selecting_plan",
           phone,
-        })
+        }),
       );
 
       return await this.showDataPlans(userId, from, phone);
@@ -292,7 +290,7 @@ export class VasIntentService {
       JSON.stringify({
         flow: "data",
         step: "awaiting_phone",
-      })
+      }),
     );
     return "Which number do you want data for? (e.g., 08012345678)";
   }
@@ -305,9 +303,8 @@ export class VasIntentService {
     if (!user?.accounts?.[0]) return "Account not found.";
 
     const account = user.accounts[0];
-    const { name: networkName, emoji } = await PsbVasService.detectNetwork(
-      phoneNumber
-    );
+    const { name: networkName, emoji } =
+      await PsbVasService.detectNetwork(phoneNumber);
 
     try {
       // 9PSB treats ₦100 data as a special product
@@ -378,7 +375,7 @@ export class VasIntentService {
       .slice(0, 9)
       .map(
         (p, i) =>
-          `${i + 1}. ${p.size} → ₦${p.price.toLocaleString()} (${p.validity})\n`
+          `${i + 1}. ${p.size} → ₦${p.price.toLocaleString()} (${p.validity})\n`,
       )
       .join("");
 
@@ -390,7 +387,7 @@ export class VasIntentService {
     await redis.setEx(
       `data_plans:${from}`,
       1800,
-      JSON.stringify({ phone: phoneNumber, plans })
+      JSON.stringify({ phone: phoneNumber, plans }),
     );
 
     return {
@@ -456,9 +453,8 @@ export class VasIntentService {
     if (!user?.accounts?.[0]) return "Account not found.";
 
     const account = user.accounts[0];
-    const { name: networkName, emoji } = await PsbVasService.detectNetwork(
-      phoneNumber
-    );
+    const { name: networkName, emoji } =
+      await PsbVasService.detectNetwork(phoneNumber);
 
     try {
       const response = await PsbVasService.buyData({
@@ -504,78 +500,6 @@ export class VasIntentService {
     }
   }
 
-  // // ───── BILL PAYMENT FLOW ─────
-  // static async startBillFlow(userId, from, message) {
-  //   const match = message.match(
-  //     /(?:pay)\s*(dstv|gotv|electricity)\s+(\d+)\s*(?:for|to)?\s*(\w+)/i
-  //   );
-  //   if (match) {
-  //     const [, billType, amount, customerId] = match;
-  //     return await this.confirmBill(userId, from, billType, amount, customerId);
-  //   }
-
-  //   await redis.setEx(
-  //     `vas:${from}`,
-  //     1800,
-  //     JSON.stringify({
-  //       flow: "bill",
-  //       step: "awaiting_biller",
-  //     })
-  //   );
-  //   return (
-  //     "Which bill do you want to pay?\n\n" +
-  //     "• `DSTV` (e.g., pay DSTV 5000 for 1234567890)\n" +
-  //     "• `GOTV`\n" +
-  //     "• `Electricity`"
-  //   );
-  // }
-
-  // static async confirmBill(userId, from, billType, amount, customerId) {
-  //   const amountNum = parseFloat(amount);
-  //   if (isNaN(amountNum) || amountNum < 100)
-  //     return "Minimum bill payment is ₦100.";
-
-  //   const user = await prisma.user.findUnique({
-  //     where: { id: userId },
-  //     include: { accounts: true },
-  //   });
-  //   if (!user?.accounts?.[0])
-  //     return "Account not found. Say *balance* to refresh.";
-
-  //   const accountId = user.accounts[0].id;
-
-  //   // Map billType to billerId (replace with real billerId from PsbVasService.getBillers)
-  //   const billerMap = {
-  //     dstv: "DSTV_001",
-  //     gotv: "GOTV_001",
-  //     electricity: "EKEDC_001",
-  //   };
-  //   const billerId = billerMap[billType.toLowerCase()];
-  //   if (!billerId) return "Invalid bill type. Try DSTV, GOTV, or Electricity.";
-
-  //   try {
-  //     const response = await PsbVasService.payBill({
-  //       userId,
-  //       accountId,
-  //       billerId,
-  //       amount: amountNum,
-  //       fields: { customerId },
-  //     });
-
-  //     await redis.del(`vas:${from}`);
-  //     return (
-  //       `🎉 Bill payment successful!\n\n` +
-  //       `📺 ${billType.toUpperCase()} for ${customerId}\n` +
-  //       `💰 ₦${amountNum.toLocaleString()}\n` +
-  //       `Ref: ${response.ref}\n` +
-  //       `Date: ${new Date().toLocaleString("en-NG")}`
-  //     );
-  //   } catch (error) {
-  //     logger.error(`[VAS] Bill payment failed: ${error.message}`);
-  //     return `Failed to pay bill: ${error.message}. Try again.`;
-  //   }
-  // }
-
   // ───── HANDLE FLOW (STATE MACHINE) ─────
   static async handleFlow(userId, from, message, flow) {
     const lower = message.toLowerCase().trim();
@@ -593,7 +517,7 @@ export class VasIntentService {
             flow: "airtime",
             step: "awaiting_amount",
             phone,
-          })
+          }),
         );
         return "How much airtime do you want? (e.g., ₦500)";
       }
@@ -607,7 +531,7 @@ export class VasIntentService {
           userId,
           from,
           amountMatch[1],
-          flow.phone
+          flow.phone,
         );
       }
       return "Please enter the amount (e.g., ₦500).";
@@ -626,7 +550,7 @@ export class VasIntentService {
             flow: "data",
             step: "awaiting_plan",
             phone,
-          })
+          }),
         );
         return "How much data do you want? (e.g., 500MB, 1GB, 2.5GB)";
       }
@@ -640,7 +564,7 @@ export class VasIntentService {
           userId,
           from,
           planMatch[1],
-          flow.phone
+          flow.phone,
         );
       }
       return "Please specify data size (e.g., 500MB or 1GB).";
@@ -691,7 +615,7 @@ export class VasIntentService {
             flow: "bill",
             step: "awaiting_details",
             biller: billerMatch[1].toLowerCase(),
-          })
+          }),
         );
         return `Please provide the ${billerMatch[1]} customer ID and amount (e.g., 1234567890 5000).`;
       }
@@ -707,7 +631,7 @@ export class VasIntentService {
           from,
           flow.biller,
           amount,
-          customerId
+          customerId,
         );
       }
       return "Please provide customer ID and amount (e.g., 1234567890 5000).";
