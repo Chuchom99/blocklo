@@ -30,7 +30,7 @@ private_key.pem
 .env.*
 !.env.example
 *.pem
-!public_key.pem
+
 *.key
 
 # runtime data

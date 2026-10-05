@@ -1,40 +1,12 @@
-import pkg from '@prisma/client';
+import pkg from "@prisma/client";
+import config from "./env.js";
+
 const { PrismaClient } = pkg;
 
-let prisma;
+// Query logging can include PII in parameters, so only enable it locally.
+const log = config.env === "development" ? ["query", "warn", "error"] : ["warn", "error"];
 
-if (process.env.NODE_ENV === 'production') {
-  prisma = new PrismaClient({
-    log: ['query', 'info', 'warn', 'error'],
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL,
-      },
-    },
-  });
-} else {
-  if (!global.prisma) {
-    global.prisma = new PrismaClient({
-      log: ['query', 'info', 'warn', 'error'],
-      datasources: {
-        db: {
-          url: process.env.DATABASE_URL,
-        },
-      },
-    });
-  }
-  prisma = global.prisma;
-}
-
-// Test DB connection
-(async () => {
-  try {
-    console.log('Attempting to connect with DATABASE_URL:', process.env.DATABASE_URL);
-    await prisma.$connect();
-    console.log('[DB] Database connection successful');
-  } catch (err) {
-    console.error('[DB] Database connection failed:', err);
-  }
-})();
+const prisma = globalThis.__prisma ?? new PrismaClient({ log });
+if (!config.isProd) globalThis.__prisma = prisma;
 
 export default prisma;

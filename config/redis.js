@@ -1,15 +1,16 @@
 import { createClient } from "redis";
+import config from "./env.js";
+import logger from "./logger.js";
 
 const client = createClient({
-    url: process.env.REDIS_URL,
-    socket: {
-        connectTimeout: 10000,
-        reconnectStrategy: (retries) => Math.min(retries * 50, 1000),
-    },
+  url: config.redis.url,
+  socket: {
+    connectTimeout: 10000,
+    reconnectStrategy: (retries) => Math.min(retries * 50, 1000),
+  },
 });
 
-client.on('error', (err) => console.error('Redis Error:', err));
-client.on('connect', () => console.log('Connected to Redis Cloud'));
+client.on("error", (err) => logger.error(`Redis error: ${err.message}`));
 
 await client.connect();
 
