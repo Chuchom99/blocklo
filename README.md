@@ -48,6 +48,13 @@ npm test
 
 To run workers separately: set `RUN_WORKERS=false` on the API servers and run `npm run worker`.
 
+**Postman:** import `tests/postman/blocklo-api.postman_collection.json` and `tests/postman/blocklo-local.postman_environment.json`, and fill in the secret values from your `.env`. Run in order: Register → Login → the rest; Logout runs last.
+- Login stores the tokens; payment creation stores `paymentId`.
+- WhatsApp webhook requests are signed automatically.
+- For the Flow endpoint, generate an encrypted body with `node scripts/flow-request.js`.
+
+`tests/integration/postman.test.js` replays the whole collection against the app on every test run, so the payloads stay valid.
+
 ## Deploying this version over the old one
 
 1. **Rotate every secret** that was in the old committed `.env`. They are compromised.

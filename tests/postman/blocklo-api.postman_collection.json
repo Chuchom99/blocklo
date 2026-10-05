@@ -1,0 +1,1997 @@
+{
+  "info": {
+    "name": "Blocklo × 9PSB API",
+    "description": "Collection for the hardened Blocklo API. Every body matches the server's Joi validation.\n\n1. Import `blocklo-local.postman_environment.json`, select it, and fill in the secret values (they match your `.env`).\n2. Run **Auth → Register**, then wait for the wallet job to finish (the user becomes ACTIVE), then **Auth → Login**. Login stores `accessToken`/`refreshToken`.\n3. Payments are two steps: **Create** stores `paymentId`; **Authorize** sends the PIN. Poll **Get payment** for the outcome.\n\nRate limits apply (login 5 per 15 min per identifier, register 5/hour, authorize 10 per 15 min). Payments need `PAYMENTS_ENABLED=true`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Auth",
+      "description": "Registration, login and session management.",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"phone\": \"{{userPhone}}\",\n  \"password\": \"{{userPassword}}\",\n  \"firstName\": \"Ada\",\n  \"lastName\": \"Obi\",\n  \"pin\": \"{{userPin}}\",\n  \"termsAgreed\": true,\n  \"gender\": 1,\n  \"dateOfBirth\": \"15/08/1995\",\n  \"address\": \"12 Adeola Odeku Street, Victoria Island, Lagos\",\n  \"bvn\": \"{{userBvn}}\",\n  \"nin\": \"{{userNin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "register"
+              ]
+            },
+            "description": "Creates the user in PENDING_WALLET and queues 9PSB wallet creation. `pin` must be 4 digits and not trivial (no 1234, 0000). At least one of `bvn`/`nin`. `dateOfBirth` is dd/MM/yyyy. `whatsappId` is not accepted here."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const b = pm.response.json();",
+                  "if (b.accessToken) { pm.environment.set('accessToken', b.accessToken); pm.environment.set('refreshToken', b.refreshToken); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "login"
+              ]
+            },
+            "description": "`identifier` is the email or phone number. Stores `accessToken` (15 min) and `refreshToken`."
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh tokens",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const b = pm.response.json();",
+                  "if (b.accessToken) { pm.environment.set('accessToken', b.accessToken); pm.environment.set('refreshToken', b.refreshToken); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "refresh"
+              ]
+            },
+            "description": "Rotates the refresh token. Re-using an old refresh token revokes the whole session family."
+          },
+          "response": []
+        },
+        {
+          "name": "Me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "description": "Balance, history and lookups for the logged-in user.",
+      "item": [
+        {
+          "name": "Balance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "balance"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const t = pm.response.json().transactions || [];",
+                  "if (t.length) pm.environment.set('transactionId', t[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/transactions?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Stores the newest transaction id as `transactionId` for the receipt request."
+          },
+          "response": []
+        },
+        {
+          "name": "Transaction receipt (PDF)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/transactions/{{transactionId}}/receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "transactions",
+                "{{transactionId}}",
+                "receipt"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Banks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/banks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "banks"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Data plans",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const p = pm.response.json().plans || [];",
+                  "if (p.length) pm.environment.set('dataProductId', p[0].productId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/data-plans?phone={{airtimePhone}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "data-plans"
+              ],
+              "query": [
+                {
+                  "key": "phone",
+                  "value": "{{airtimePhone}}"
+                }
+              ]
+            },
+            "description": "Stores the cheapest plan's id as `dataProductId` for the data payment request."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Beneficiaries",
+      "description": "Saved recipients. Saving runs a name enquiry (rate-limited to 20/hour).",
+      "item": [
+        {
+          "name": "List beneficiaries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/beneficiaries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "beneficiaries"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save beneficiary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alias\": \"mom\",\n  \"accountNumber\": \"{{recipientAccount}}\",\n  \"bank\": \"GTBank\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/beneficiaries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "beneficiaries"
+              ]
+            },
+            "description": "`alias`: letters/digits, starting with a letter. `bank`: a bank name or code."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete beneficiary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/beneficiaries/mom",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "beneficiaries",
+                "mom"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "description": "Create a draft (no money moves), then authorize it with the PIN. Execution is asynchronous: poll **Get payment**. A new draft cancels any older open draft; drafts expire after 5 minutes.",
+      "item": [
+        {
+          "name": "Create transfer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));",
+                  "const p = pm.response.json().payment;",
+                  "if (p) pm.environment.set('paymentId', p.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"TRANSFER\",\n  \"amount\": 5000,\n  \"accountNumber\": \"{{recipientAccount}}\",\n  \"bankCode\": \"{{recipientBankCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments"
+              ]
+            },
+            "description": "Name enquiry runs on the server; the resolved name is in `payment.summary`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create airtime",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));",
+                  "const p = pm.response.json().payment;",
+                  "if (p) pm.environment.set('paymentId', p.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"AIRTIME\",\n  \"amount\": 500,\n  \"phoneNumber\": \"{{airtimePhone}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments"
+              ]
+            },
+            "description": "Network is detected by 9PSB."
+          },
+          "response": []
+        },
+        {
+          "name": "Create data",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));",
+                  "const p = pm.response.json().payment;",
+                  "if (p) pm.environment.set('paymentId', p.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"DATA\",\n  \"phoneNumber\": \"{{airtimePhone}}\",\n  \"productId\": \"{{dataProductId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments"
+              ]
+            },
+            "description": "Run **Account → Data plans** first. The price comes from 9PSB, not from the request."
+          },
+          "response": []
+        },
+        {
+          "name": "Create electricity bill",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));",
+                  "const p = pm.response.json().payment;",
+                  "if (p) pm.environment.set('paymentId', p.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"BILL\",\n  \"billType\": \"electricity\",\n  \"billerId\": \"{{electricityBillerId}}\",\n  \"customerId\": \"{{meterNumber}}\",\n  \"amount\": 5000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments"
+              ]
+            },
+            "description": "Minimum ₦1,000. The meter is validated with the disco and the owner's name is shown in the summary."
+          },
+          "response": []
+        },
+        {
+          "name": "Create cable TV bill",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.expect(pm.response.code).to.be.oneOf([201]));",
+                  "const p = pm.response.json().payment;",
+                  "if (p) pm.environment.set('paymentId', p.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"BILL\",\n  \"billType\": \"tv\",\n  \"billerId\": \"CW-DSTV\",\n  \"customerId\": \"{{smartcardNumber}}\",\n  \"itemId\": \"{{tvItemId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments"
+              ]
+            },
+            "description": "`amount` is ignored for TV: the bouquet price comes from 9PSB."
+          },
+          "response": []
+        },
+        {
+          "name": "Authorize payment (PIN)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.expect(pm.response.code).to.be.oneOf([202]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pin\": \"{{userPin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments/{{paymentId}}/authorize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments",
+                "{{paymentId}}",
+                "authorize"
+              ]
+            },
+            "description": "202 = accepted for execution. Errors: 401 wrong PIN (attempts left in message), 423 locked (5 wrong tries → 30 min), 409 already used, 410 expired."
+          },
+          "response": []
+        },
+        {
+          "name": "Get payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments/{{paymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments",
+                "{{paymentId}}"
+              ]
+            },
+            "description": "`payment.status`: DRAFT → AUTHORIZED → EXECUTING → DONE/FAILED. `payment.transaction.status`: PENDING/SUCCESS/FAILED/UNKNOWN."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200 or 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me/payments/{{paymentId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me",
+                "payments",
+                "{{paymentId}}",
+                "cancel"
+              ]
+            },
+            "description": "Only DRAFT payments can be cancelled."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Ops endpoints. Require `X-Admin-Key` (and the caller IP in `ADMIN_IPS` if set). Every call is audit-logged.",
+      "item": [
+        {
+          "name": "Wallet enquiry",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountNo\": \"{{walletAccount}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/enquiry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "enquiry"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wallet status",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountNo\": \"{{walletAccount}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "status"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change wallet status",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountNumber\": \"{{walletAccount}}\",\n  \"accountStatus\": \"SUSPENDED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/change-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "change-status"
+              ]
+            },
+            "description": "`accountStatus`: ACTIVE or SUSPENDED.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wallet by BVN",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bvn\": \"{{userBvn}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/by-bvn",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "by-bvn"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wallet transactions (9PSB)",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountNo\": \"{{walletAccount}}\",\n  \"fromDate\": \"2026-09-01\",\n  \"toDate\": \"2026-10-05\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "transactions"
+              ]
+            },
+            "description": "Dates are yyyy-MM-dd.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Float transfer",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accountNo\": \"{{walletAccount}}\",\n  \"amount\": 1000,\n  \"direction\": \"credit\",\n  \"reason\": \"Sandbox funding for QA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/wallet/float-transfer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "wallet",
+                "float-transfer"
+              ]
+            },
+            "description": "Moves money between a wallet and the client float. `direction`: debit or credit. `reason` (5–100 chars) is recorded in the audit log.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Notification requery",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionID\": \"{{inflowSessionId}}\",\n  \"accountNumber\": \"{{walletAccount}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/psb/notification/requery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "psb",
+                "notification",
+                "requery"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Transactions needing review",
+          "event": [],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/transactions/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions",
+                "review"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Requery a transaction",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Key",
+                "value": "{{adminApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/transactions/{{transactionReference}}/requery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "transactions",
+                "{{transactionReference}}",
+                "requery"
+              ]
+            },
+            "description": "Asks 9PSB for the real outcome and settles the ledger row if it is final.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (simulated)",
+      "description": "Simulate the calls Meta and 9PSB make. WhatsApp requests are signed by a pre-request script using `whatsappAppSecret`; `waFrom` must be a registered user's WhatsApp number (digits only) for chat flows.",
+      "item": [
+        {
+          "name": "WhatsApp: verify webhook",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('echoes challenge', () => pm.expect(pm.response.text()).to.eql('1158201444'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token={{whatsappVerifyToken}}&hub.challenge=1158201444",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ],
+              "query": [
+                {
+                  "key": "hub.mode",
+                  "value": "subscribe"
+                },
+                {
+                  "key": "hub.verify_token",
+                  "value": "{{whatsappVerifyToken}}"
+                },
+                {
+                  "key": "hub.challenge",
+                  "value": "1158201444"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: balance",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"balance\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: transfer",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"send 5000 to {{recipientAccount}} gtbank\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            },
+            "description": "Creates a DRAFT and sends the PIN Flow to the user. No money moves from this message."
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: airtime",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"buy 500 airtime for {{airtimePhone}}\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: electricity",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"electricity\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            },
+            "description": "Starts the guided bill flow; reply with the list selection, meter number and amount."
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: list reply (select disco)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"interactive\",\n                \"interactive\": {\n                  \"type\": \"list_reply\",\n                  \"list_reply\": {\n                    \"id\": \"DISCO_{{electricityBillerId}}\",\n                    \"title\": \"Ikeja Electric\"\n                  }\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: button reply",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Meta signs the raw body with the app secret (HMAC-SHA256).",
+                  "// A fresh message id per send: the server ignores repeated ids by design.",
+                  "pm.variables.set('waMessageId', 'wamid.postman.' + Date.now());",
+                  "pm.variables.set('waTimestamp', String(Math.floor(Date.now() / 1000)));",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"interactive\",\n                \"interactive\": {\n                  \"type\": \"button_reply\",\n                  \"button_reply\": {\n                    \"id\": \"BENDEL_YES\",\n                    \"title\": \"Yes, remove\"\n                  }\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp: unsigned (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.expect(pm.response.code).to.be.oneOf([401]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{whatsappWabaId}}\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"2348000000000\",\n              \"phone_number_id\": \"{{whatsappPhoneNumberId}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": {\n                  \"name\": \"Ada Obi\"\n                },\n                \"wa_id\": \"{{waFrom}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{waFrom}}\",\n                \"id\": \"{{waMessageId}}\",\n                \"timestamp\": \"{{waTimestamp}}\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"balance\"\n                }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "webhook"
+              ]
+            },
+            "description": "Same payload without a signature: must be rejected."
+          },
+          "response": []
+        },
+        {
+          "name": "WhatsApp Flow: data exchange",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Body comes from: node scripts/flow-request.js encrypt <flow_public_key.pem> '<json>'",
+                  "const body = pm.variables.replaceIn(pm.request.body.raw);",
+                  "pm.request.body.raw = body;",
+                  "const sig = CryptoJS.HmacSHA256(body, pm.environment.get('whatsappAppSecret')).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Hub-Signature-256', value: 'sha256=' + sig });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{{flowEncryptedBody}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/whatsapp/flow",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "whatsapp",
+                "flow"
+              ]
+            },
+            "description": "Flow requests are RSA/AES encrypted, which Postman can't do. Generate the body with `node scripts/flow-request.js encrypt <flow_public_key.pem> '{\"version\":\"3.0\",\"action\":\"ping\"}'`, paste the printed body into the `flowEncryptedBody` environment value, send, then decrypt the response with the `decrypt` command it prints. Status codes: 421 can't decrypt, 427 bad flow_token, 432 bad signature."
+          },
+          "response": []
+        },
+        {
+          "name": "9PSB: transaction status event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{psbWebhookUsername}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{psbWebhookPassword}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionReference\": \"{{transactionReference}}\",\n  \"status\": \"SUCCESS\",\n  \"responseCode\": \"00\",\n  \"amount\": \"5000.00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhook/9psb/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "9psb",
+                "webhook"
+              ]
+            },
+            "description": "Triggers a requery of that reference; the webhook's claimed status is never trusted on its own."
+          },
+          "response": []
+        },
+        {
+          "name": "9PSB: inflow event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{psbWebhookUsername}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{psbWebhookPassword}}"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionID\": \"{{inflowSessionId}}\",\n  \"accountNumber\": \"{{walletAccount}}\",\n  \"amount\": \"2500.00\",\n  \"originatorAccountName\": \"BOLA ADE\",\n  \"originatorAccountNumber\": \"0123456789\",\n  \"originatorBank\": \"058\",\n  \"narration\": \"Inflow test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhook/9psb/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "9psb",
+                "webhook"
+              ]
+            },
+            "description": "Recorded only after `notification_requery` confirms it with 9PSB; the confirmed amount is used."
+          },
+          "response": []
+        },
+        {
+          "name": "9PSB: bad credentials (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.expect(pm.response.code).to.be.oneOf([401]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "blocklo_webhook"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong-password"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionReference\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhook/9psb/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "9psb",
+                "webhook"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Logout (run last)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status is 200\", () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/users/logout",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "users",
+            "logout"
+          ]
+        },
+        "description": "Revokes the session immediately, so it is last in the run order."
+      },
+      "response": []
+    }
+  ]
+}

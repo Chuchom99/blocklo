@@ -60,6 +60,13 @@ export function makeTable(defaults = () => ({}), relations = {}) {
       if (!row) throw new Error("Record not found");
       return { ...applyData(row, data) };
     }),
+    upsert: jest.fn(async ({ where, update, create }) => {
+      const row = rows.find((r) => matches(r, where));
+      if (row) return { ...applyData(row, update) };
+      const created = { id: crypto.randomUUID(), createdAt: new Date(), updatedAt: new Date(), ...defaults(), ...create };
+      rows.push(created);
+      return { ...created };
+    }),
     updateMany: jest.fn(async ({ where, data }) => {
       const hits = rows.filter((r) => matches(r, where));
       hits.forEach((r) => applyData(r, data));
