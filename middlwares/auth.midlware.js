@@ -1,21 +1,29 @@
-// middleware/auth.middleware.js
+import config from "../config/env.js";
+import logger from "../config/logger.js";
+import { safeEqual } from "../utils/crypto.js";
+
+const { username, password, allowedIps } = config.psb.webhook;
+
+// HTTP Basic auth for 9PSB's webhook, plus an optional source-IP allowlist.
 export const basicAuth = (req, res, next) => {
-  const auth = req.headers.authorization;
-
-  if (!auth || !auth.startsWith("Basic ")) {
-    return res.status(401).json({ error: "Unauthorized" });
+  if (allowedIps.length && !allowedIps.includes(req.ip)) {
+    logger.warn(`[PSB WEBHOOK] rejected source IP ${req.ip}`);
+    return res.status(403).json({ error: "Forbidden" });
   }
 
-  const base64Credentials = auth.split(" ")[1];
-  const credentials = Buffer.from(base64Credentials, "base64").toString("ascii");
-  const [username, password] = credentials.split(":");
+  const header = req.get("authorization") || "";
+  if (!header.startsWith("Basic ")) return res.status(401).json({ error: "Unauthorized" });
 
-  const expectedUsername = process.env.WEBHOOK_USERNAME || "blocklo_webhook";
-  const expectedPassword = process.env.WEBHOOK_PASSWORD || "y5#K9mPx!2vN8qL"; // STRONG password
+  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+  const sep = decoded.indexOf(":");
+  const user = sep === -1 ? "" : decoded.slice(0, sep);
+  const pass = sep === -1 ? "" : decoded.slice(sep + 1);
 
-  if (username === expectedUsername && password === expectedPassword) {
-    return next();
-  }
+  // Evaluate both comparisons so timing doesn't reveal which part was wrong.
+  const userOk = safeEqual(user, username);
+  const passOk = safeEqual(pass, password);
+  if (userOk && passOk) return next();
 
-  return res.status(401).json({ error: "Invalid credentials" });
+  logger.warn(`[PSB WEBHOOK] invalid credentials from ${req.ip}`);
+  return res.status(401).json({ error: "Unauthorized" });
 };

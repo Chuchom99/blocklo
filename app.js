@@ -1,70 +1,45 @@
-import dotenv from "dotenv";
+import config from "./config/env.js";
 import express from "express";
-import morgan from "morgan"; 
+import helmet from "helmet";
 import cors from "cors";
-import path from "path";
-import { fileURLToPath } from "url";
+import morgan from "morgan";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Load env variables
-dotenv.config();
-
-// Routes
 import userRoutes from "./routes/user.routes.js";
-import walletRoutes from "./routes/wallet.routes.js";
-// import transactionRoutes from "./routes/transaction.routes.js";
-import psbRoutes from "./routes/psb.routes.js";
-import aiRoutes from "./routes/ai.routes.js";
-import whatsappRoutes from "./routes/whatsapp.routes.js"
-import webhookRoutes from "./routes/webhooks.js"
-import psbVasRoutes from "./routes/psb.vas.route.js";
-import debugRoutes from "./routes/debug.js";
-// import WhatsAppService from "./services/whatsapp.services.js"
-// WhatsAppService.uploadPublicKey();
+import meRoutes from "./routes/me.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+import whatsappRoutes from "./routes/whatsapp.routes.js";
+import webhookRoutes from "./routes/webhooks.js";
+import { errorHandler, notFoundHandler, requestId } from "./middlwares/error.middleware.js";
 
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(morgan("dev")); // Logs requests
+// Behind one reverse proxy (needed for correct req.ip in rate limits and allowlists).
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
 
-// Routes
+app.use(requestId);
+app.use(helmet());
+app.use(cors({ origin: config.corsOrigins.length ? config.corsOrigins : false }));
+// Keep the raw body: Meta's webhook signature is computed over the exact bytes.
+app.use(
+  express.json({
+    limit: "100kb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
+if (!config.isTest) app.use(morgan(config.isProd ? "combined" : "dev"));
+
+app.get("/health", (req, res) => res.json({ status: "ok" }));
+
 app.use("/api/users", userRoutes);
-app.use("/api/wallet", walletRoutes);
-// app.use("/api/transactions", transactionRoutes);
-app.use("/api/psb", psbRoutes);
-app.use("/api/ai", aiRoutes);
-app.use("/api/whatsapp", whatsappRoutes)
+app.use("/api/me", meRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 app.use("/webhook", webhookRoutes);
-app.use("/api/psb/vas", psbVasRoutes);
-app.use("/debug", debugRoutes);
-app.use('/receipts', express.static(path.join(__dirname, 'public/receipts')));
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "WhatsApp Fintech API" });
-});
-app.get("/webhook", (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+app.use(notFoundHandler);
+app.use(errorHandler);
 
-  if (mode && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-  return res.sendStatus(403);
-});
-
-
-// Error handling
-app.use((err, req, res, next) => {
-  console.error("Unhandled Error:", err);
-  res.status(500).json({ success: false, message: "Internal Server Error" });
-});
-
-
-
-export default app
+export default app;

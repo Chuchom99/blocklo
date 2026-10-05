@@ -1,91 +1,27 @@
-// controllers/webhook.controller.js
-import prisma from "../config/prisma.js";
 import logger from "../config/logger.js";
+import { psbWebhookQueue } from "../config/queue.js";
+import { sha256 } from "../utils/crypto.js";
 
-export const handle9psbWebhook = async (req, res) => {
+// 9PSB webhook (Basic-auth protected). Acknowledge immediately and process in a
+// durable job. The job id is derived from the event, so 9PSB retries are no-ops.
+export async function handle9psbWebhook(req, res) {
+  const payload = req.body || {};
+  const eventKey =
+    payload.transactionReference || payload.sessionID || payload.sessionId || payload.reference || sha256(JSON.stringify(payload));
+
   try {
-    const payload = req.body;
-    logger.info(`[WEBHOOK] 9PSB → ${JSON.stringify(payload)}`);
-
-    // Acknowledge immediately (as requested)
-    res.json({
-      success: true,
-      status: "success",
-      code: "00",
-      message: "Acknowledged",
+    await psbWebhookQueue.add("event", payload, {
+      jobId: `psb-${sha256(String(eventKey)).slice(0, 40)}`,
+      attempts: 5,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: 5000,
+      removeOnFail: 5000,
     });
-
-    // Process in background
-    process.nextTick(async () => {
-      try {
-        const { transactionReference, status, amount, debitAccount, creditAccount, narration } = payload;
-
-        if (!transactionReference) {
-          logger.warn("[WEBHOOK] Missing transactionReference");
-          return;
-        }
-
-        // Find pending transaction
-        const transaction = await prisma.transaction.findFirst({
-          where: {
-            reference: transactionReference,
-            status: "PENDING",
-          },
-          include: { account: true },
-        });
-
-        if (!transaction) {
-          logger.info(`[WEBHOOK] No pending transaction found for ${transactionReference}`);
-          return;
-        }
-
-        const isSuccess = status?.toLowerCase() === "success" || status === "00";
-
-        if (isSuccess) {
-          // Final success → do nothing (already debited)
-          await prisma.transaction.update({
-            where: { id: transaction.id },
-            data: {
-              status: "SUCCESS",
-              metadata: payload,
-            },
-          });
-
-          logger.info(`[WEBHOOK] Transaction ${transactionReference} confirmed SUCCESS`);
-        } else {
-          // FAILED → REVERSE
-          await prisma.$transaction([
-            // Reverse balance
-            prisma.account.update({
-              where: { id: transaction.accountId },
-              data: { balance: { increment: transaction.amount } },
-            }),
-            // Mark failed
-            prisma.transaction.update({
-              where: { id: transaction.id },
-              data: {
-                status: "FAILED",
-                metadata: { ...payload, error: "9PSB rejected" },
-              },
-            }),
-          ]);
-
-          logger.warn(`[WEBHOOK] Transaction ${transactionReference} FAILED → Reversed`);
-        }
-      } catch (error) {
-        logger.error(`[WEBHOOK] Processing error: ${error.message}`);
-      }
-    });
-  } catch (error) {
-    logger.error(`[WEBHOOK] Fatal error: ${error.message}`);
-    // Still acknowledge so 9PSB doesn't retry endlessly
-    if (!res.headersSent) {
-      res.json({
-        success: true,
-        status: "success",
-        code: "00",
-        message: "Acknowledged",
-      });
-    }
+  } catch (err) {
+    // Not acknowledging lets 9PSB retry later rather than losing the event.
+    logger.error(`[PSB WEBHOOK] enqueue failed: ${err.message}`);
+    return res.status(503).json({ success: false, status: "error", code: "96", message: "Try again" });
   }
-};
+
+  return res.json({ success: true, status: "success", code: "00", message: "Acknowledged" });
+}
