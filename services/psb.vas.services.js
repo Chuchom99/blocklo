@@ -1,484 +1,189 @@
-// services/psb.vas.service.js
 import axios from "axios";
-import crypto from "crypto";
+import config from "../config/env.js";
 import logger from "../config/logger.js";
-import prisma from "../config/prisma.js";
-import { v4 as uuidv4 } from "uuid";
+import { OUTCOME, classifyResponse, classifyStatusQuery } from "./psb.service.js";
+import { toLocalPhone } from "../utils/phone.js";
 
-const PSB_SECRET_KEY = process.env.PSB_SECRET_KEY;
-const PSB_VAS_BASE_URL =
-  process.env.PSB_VAS_BASE_URL || "http://102.216.128.75:9090/vas/api/v1";
-const PSB_IDENTITY_BASE_URL =
-  process.env.PSB_IDENTITY_BASE_URL ||
-  "http://102.216.128.75:9090/identity/api/v1";
+// 9PSB VAS (airtime, data, bills) client. Like PsbService it never touches the
+// ledger; purchases take the ledger reference and return a classified outcome.
+
+const VAS_BASE_URL = config.psb.vasBaseUrl;
+const IDENTITY_BASE_URL = config.psb.identityBaseUrl;
+
+const wasRejected = (error) => [400, 401, 403, 404, 422].includes(error.response?.status);
 
 class PsbVasService {
   static cachedToken = null;
   static tokenExpiry = 0;
+  static networkCache = new Map();
 
-  /** Get VAS Auth Token (cached) */
   static async getVASAuthToken(forceRefresh = false) {
-    const now = Date.now();
-    if (!forceRefresh && this.cachedToken && now < this.tokenExpiry) {
-      return this.cachedToken;
-    }
+    if (!forceRefresh && this.cachedToken && Date.now() < this.tokenExpiry) return this.cachedToken;
 
-    try {
-      const response = await axios.post(
-        `${PSB_IDENTITY_BASE_URL}/authenticate`,
-        {
-          username: process.env.PSB_VAS_API_KEY,
-          password: process.env.PSB_VAS_SECRET_KEY,
-        },
-        { headers: { "Content-Type": "application/json" }, timeout: 15000 }
-      );
-
-      const data = response.data;
-      if (
-        data?.status?.toLowerCase() !== "success" ||
-        !data?.data?.accessToken
-      ) {
-        throw new Error(data?.message || "VAS Auth failed");
-      }
-
-      this.cachedToken = data.data.accessToken;
-      this.tokenExpiry = now + (data.data.expiresIn || 7200000); // 2 hours default
-      logger.info("[VAS] New token acquired");
-      return this.cachedToken;
-    } catch (error) {
-      logger.error(`[VAS] Token fetch failed: ${error.message}`);
+    const response = await axios.post(
+      `${IDENTITY_BASE_URL}/authenticate`,
+      { username: config.psb.vas.apiKey, password: config.psb.vas.secretKey },
+      { headers: { "Content-Type": "application/json" }, timeout: 15000 },
+    );
+    const data = response.data;
+    if (String(data?.status).toLowerCase() !== "success" || !data?.data?.accessToken) {
       throw new Error("VAS authentication failed");
     }
+
+    // expiresIn is in seconds; refresh a minute early.
+    const ttlSeconds = Number(data.data.expiresIn) || 7200;
+    this.cachedToken = data.data.accessToken;
+    this.tokenExpiry = Date.now() + Math.max(ttlSeconds - 60, 60) * 1000;
+    return this.cachedToken;
   }
 
-  /** Generic Request with Full Logging */
-  static async makeRequest(method, endpoint, payload = null) {
-    const token = await this.getVASAuthToken();
-    const url = `${PSB_VAS_BASE_URL}${endpoint}`;
-
-    logger.info(`[VAS] → ${method.toUpperCase()} ${endpoint}`);
-    if (payload) logger.info(`[VAS] Payload: ${JSON.stringify(payload)}`);
-
-    try {
-      const response = await axios({
+  static async makeRequest(method, endpoint, payload, { timeout = 25000 } = {}) {
+    const send = async (token) =>
+      axios({
         method,
-        url,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        url: `${VAS_BASE_URL}${endpoint}`,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         data: payload,
-        timeout: 25000,
+        timeout,
       });
 
-      logger.info(
-        `[VAS] ← Success: ${JSON.stringify(response.data).slice(0, 500)}`
-      );
-      return response.data;
+    try {
+      return (await send(await this.getVASAuthToken())).data;
     } catch (error) {
-      const errMsg = error.response?.data || error.message;
-      logger.error(`[VAS] ← FAILED ${endpoint}: ${JSON.stringify(errMsg)}`);
-      throw new Error(
-        `VAS Error: ${errMsg.message || errMsg || error.message}`
-      );
+      if (error.response?.status !== 401) throw error;
+      return (await send(await this.getVASAuthToken(true))).data;
     }
   }
 
-  // In PsbVasService class
+  // Read-only call: throws a generic error on failure.
+  static async query(method, endpoint, label) {
+    try {
+      return await this.makeRequest(method, endpoint);
+    } catch (error) {
+      logger.error(`[VAS] ${label} failed [${error.response?.status || error.code || "no status"}]`);
+      throw new Error(`${label} failed`);
+    }
+  }
 
-  static networkCache = new Map(); // Simple in-memory cache
+  // Money-moving call: single attempt, never retried, outcome classified.
+  static async purchase(endpoint, payload, reference, label) {
+    try {
+      const body = await this.makeRequest("post", endpoint, payload, { timeout: 45000 });
+      const outcome = classifyResponse(body);
+      logger.info(`[VAS] ${label} ${reference}: ${outcome}`);
+      return { outcome, providerRef: body?.data?.transactionReference || null, raw: body };
+    } catch (error) {
+      const outcome = wasRejected(error) ? OUTCOME.FAILED : OUTCOME.UNKNOWN;
+      logger.error(`[VAS] ${label} ${reference} error [${error.response?.status || error.code}]: ${outcome}`);
+      return { outcome, providerRef: null, raw: error.response?.data ?? { error: error.code || error.message } };
+    }
+  }
 
   static async detectNetwork(phoneNumber) {
-    // Remove +234 or 0 prefix if needed
-    const cleanPhone = phoneNumber.replace(/^(\+234|234|0)/, "0");
-
-    // Check cache first (5-minute TTL)
-    const cached = this.networkCache.get(cleanPhone);
-    if (cached && Date.now() - cached.timestamp < 300000) {
-      return cached.data;
-    }
+    const phone = toLocalPhone(phoneNumber);
+    const cached = this.networkCache.get(phone);
+    if (cached && Date.now() - cached.timestamp < 300000) return cached.data;
 
     try {
-      const response = await this.makeRequest(
-        "get",
-        `/topup/network?phone=${cleanPhone}`
-      );
-
-      if (
-        response.status?.toLowerCase() === "success" &&
-        response.data?.network
-      ) {
-        const networkData = {
-          name: response.data.network.toUpperCase(),
-          emoji:
-            {
-              MTN: "MTN",
-              AIRTEL: "Airtel",
-              GLO: "Glo",
-              "9MOBILE": "9mobile",
-              ETISALAT: "9mobile",
-            }[response.data.network.toUpperCase()] || "Phone",
-        };
-
-        // Cache for 5 minutes
-        this.networkCache.set(cleanPhone, {
-          data: networkData,
-          timestamp: Date.now(),
-        });
-
-        return networkData;
+      const response = await this.makeRequest("get", `/topup/network?phone=${encodeURIComponent(phone)}`);
+      if (String(response?.status).toLowerCase() === "success" && response.data?.network) {
+        const name = response.data.network.toUpperCase();
+        const data = { name: name === "ETISALAT" ? "9MOBILE" : name };
+        this.networkCache.set(phone, { data, timestamp: Date.now() });
+        return data;
       }
-
-      return { name: "Unknown", emoji: "Question" };
     } catch (error) {
-      logger.warn(
-        `[VAS] Network detection failed for ${cleanPhone}: ${error.message}`
-      );
-      return { name: "Unknown", emoji: "Question" };
+      logger.warn(`[VAS] Network detection failed [${error.response?.status || error.code}]`);
     }
+    return { name: "UNKNOWN" };
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // AIRTIME
-  // ─────────────────────────────────────────────────────────────
-  static async buyAirtime({ userId, accountId, phoneNumber, amount }) {
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-    });
-    if (!account) throw new Error("Account not found");
-
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum < 50)
-      throw new Error("Minimum airtime: ₦50");
-
-    const ref = uuidv4().replace(/-/g, "").slice(0, 18);
-    const networkInfo = await this.detectNetwork(phoneNumber);
-    const network = networkInfo.name;
-
-    const payload = {
-      phoneNumber,
-      amount: String(amountNum),
-      transactionReference: ref,
-      debitAccount: account.accountNumber,
-      network,
-    };
-
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId,
-        accountId,
-        amount: amountNum,
-        reference: ref,
-        type: "DEBIT",
-        status: "PENDING",
-        description: `Airtime: ${phoneNumber}`,
-      },
-    });
-
-    try {
-      const response = await this.makeRequest(
-        "post",
-        "/topup/airtime",
-        payload
-      );
-
-      // ONLY update Transaction with metadata
-      await prisma.$transaction([
-        // Remove metadata from account update
-        prisma.account.update({
-          where: { id: accountId },
-          data: {
-            // Only update balance if you have it in Account model
-            // balance: { decrement: amountNum }
-          },
-        }),
-        prisma.transaction.update({
-          where: { id: transaction.id },
-          data: {
-            status: "SUCCESS",
-            metadata: response,
-          },
-        }),
-      ]);
-
-      return { success: true, data: response, ref };
-    } catch (error) {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          status: "FAILED",
-          metadata: { error: error.message, psbResponse: error.response?.data },
-        },
-      });
-      throw error;
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // DATA
-  // ─────────────────────────────────────────────────────────────
   static async getDataPlans(phoneNumber) {
     try {
-      const cleanPhone = phoneNumber.replace(/^(\+234|234)/, "0");
-      const response = await this.makeRequest(
-        "get",
-        `/topup/dataPlans?phone=${cleanPhone}`
-      );
-
-      if (
-        response.status?.toLowerCase() === "success" &&
-        Array.isArray(response.data)
-      ) {
-        return response.data.map((plan) => ({
-          productId: plan.productId || plan.id,
+      const phone = toLocalPhone(phoneNumber);
+      const response = await this.makeRequest("get", `/topup/dataPlans?phone=${encodeURIComponent(phone)}`);
+      if (String(response?.status).toLowerCase() !== "success" || !Array.isArray(response.data)) return [];
+      return response.data
+        .map((plan) => ({
+          productId: String(plan.productId || plan.id),
           name: plan.name || plan.productName,
-          size: plan.dataVolume || plan.size,
-          price: parseFloat(plan.amount || plan.price),
-          validity: plan.validity || "30 days",
-          network: plan.network || "Unknown",
-        }));
-      }
-      return [];
+          size: plan.dataVolume || plan.size || plan.name || plan.productName,
+          price: Number.parseFloat(plan.amount ?? plan.price),
+          validity: plan.validity || "",
+        }))
+        .filter((p) => p.productId && Number.isFinite(p.price) && p.price > 0);
     } catch (error) {
-      logger.warn(`[VAS] Failed to fetch data plans: ${error.message}`);
+      logger.warn(`[VAS] Failed to fetch data plans [${error.response?.status || error.code}]`);
       return [];
     }
   }
 
-  static async buyData({ userId, accountId, phoneNumber, productId, amount }) {
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-    });
-    if (!account) throw new Error("Account not found");
-
-    const amountNum = parseFloat(amount);
-    const ref = uuidv4().replace(/-/g, "").slice(0, 18);
-    const networkInfo = await this.detectNetwork(phoneNumber);
-    const network = networkInfo.name;
-
-    const payload = {
-      phoneNumber,
-      productId,
-      amount: String(amountNum),
-      transactionReference: ref,
-      debitAccount: account.accountNumber,
-      network,
-    };
-
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId,
-        accountId,
-        amount: amountNum,
-        reference: ref,
-        type: "DEBIT",
-        status: "PENDING",
-        description: `Data: ${phoneNumber}`,
-      },
-    });
-
-    try {
-      const response = await this.makeRequest("post", "/topup/data", payload);
-
-      await prisma.$transaction([
-        // Remove metadata from account update
-        prisma.account.update({
-          where: { id: accountId },
-          data: {
-            // Only update balance if you have it in Account model
-            // balance: { decrement: amountNum }
-          },
-        }),
-        prisma.transaction.update({
-          where: { id: transaction.id },
-          data: {
-            status: "SUCCESS",
-            metadata: response,
-          },
-        }),
-      ]);
-
-      return { success: true, data: response, ref };
-    } catch (error) {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: "FAILED", metadata: { error: error.message } },
-      });
-      throw error;
-    }
+  static buyAirtime({ reference, phoneNumber, amount, network, debitAccount }) {
+    return this.purchase(
+      "/topup/airtime",
+      { phoneNumber: toLocalPhone(phoneNumber), amount: String(amount), transactionReference: reference, debitAccount, network },
+      reference,
+      "airtime",
+    );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // BILLS
-  // ─────────────────────────────────────────────────────────────
-  static async getBillCategories() {
-    return await this.makeRequest("get", "/billspayment/categories");
-  }
-  static async getCategoryBillers(categoryId) {
-    return await this.makeRequest("get", `/billspayment/billers/${categoryId}`);
-  }
-
-  static async getBillers(categoryId) {
-    return await this.makeRequest("get", `/billspayment/billers/${categoryId}`);
+  static buyData({ reference, phoneNumber, productId, amount, network, debitAccount }) {
+    return this.purchase(
+      "/topup/data",
+      { phoneNumber: toLocalPhone(phoneNumber), productId, amount: String(amount), transactionReference: reference, debitAccount, network },
+      reference,
+      "data",
+    );
   }
 
-  static async getBillerFields(billerId) {
-    return await this.makeRequest("get", `/billspayment/fields/${billerId}`);
+  static getBillCategories() {
+    return this.query("get", "/billspayment/categories", "Bill categories");
+  }
+
+  static getCategoryBillers(categoryId) {
+    return this.query("get", `/billspayment/billers/${encodeURIComponent(categoryId)}`, "Billers");
+  }
+
+  static getBillerFields(billerId) {
+    return this.query("get", `/billspayment/fields/${encodeURIComponent(billerId)}`, "Biller fields");
   }
 
   static async validatePayment(payload) {
-    return await this.makeRequest("post", "/billspayment/validate", payload);
-  }
-
-  static async payBill({ userId, accountId, billerId, amount, fields }) {
-    const token = await this.getVASAuthToken();
-    let account;
-
-    if (accountId) {
-      account = await prisma.account.findUnique({ where: { id: accountId } });
-    } else if (fields?.debitAccount) {
-      account = await prisma.account.findUnique({
-        where: { accountNumber: fields.debitAccount },
-      });
-    } else {
-      throw new Error("Missing accountId or debitAccount in request payload");
-    }
-
-    if (!account) throw new Error("Account not found");
-
-    // ✅ Convert string to number for DB storage
-    const numericAmount = parseFloat(amount);
-    if (isNaN(numericAmount)) throw new Error("Invalid amount format");
-
-    // if (account.balance < numericAmount)
-    //   throw new Error("Insufficient balance");
-
-    const transactionReference = uuidv4().replace(/-/g, "").slice(0, 18);
-
-    // ✅ Convert back to string only for PSB request
-    const payload = {
-      billerId,
-      amount: String(amount), // PSB requires string
-      accountNumber: account.accountNumber,
-      transactionReference,
-      ...fields,
-    };
-
-    // ✅ Save as float to DB
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId,
-        accountId: account.id,
-        amount: numericAmount, // Prisma requires Float
-        reference: transactionReference,
-        type: "DEBIT",
-        status: "PENDING",
-      },
-    });
-
     try {
-      const response = await this.makeRequest(
-        "post",
-        "/billspayment/pay",
-        payload
-      );
-
-      await prisma.$transaction([
-        prisma.account.update({
-          where: { id: account.id },
-          data: { balance: account.balance - numericAmount },
-        }),
-        prisma.transaction.update({
-          where: { id: transaction.id },
-          data: {
-            status: "SUCCESS",
-            metadata: response.data || {},
-          },
-        }),
-      ]);
-
-      logger.info(`[VAS] Bill payment successful for ${account.accountNumber}`);
-      return response;
+      return await this.makeRequest("post", "/billspayment/validate", payload);
     } catch (error) {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: "FAILED", metadata: { error: error.message } },
-      });
-
-      logger.error(`[VAS] Bill payment failed: ${error.message}`);
-      throw error;
+      logger.warn(`[VAS] Bill validation failed [${error.response?.status || error.code}]`);
+      return null;
     }
   }
 
-  // static async payBill({ userId, accountId, billerId, amount, fields }) {
-  //   // CRITICAL FIX: Get account safely
-  //   let account;
+  // Caller fields go first so they can never override the debit account, amount or reference.
+  static payBill({ reference, billerId, amount, debitAccount, fields = {} }) {
+    return this.purchase(
+      "/billspayment/pay",
+      { ...fields, billerId, amount: String(amount), accountNumber: debitAccount, transactionReference: reference },
+      reference,
+      "bill",
+    );
+  }
 
-  //   if (accountId) {
-  //     account = await prisma.account.findUnique({
-  //       where: { id: accountId },
-  //     });
-  //   }
+  static async getTopupStatus(reference) {
+    return this.status(`/topup/status?transReference=${encodeURIComponent(reference)}`, reference);
+  }
 
-  //   // Fallback: if accountId missing, try to get user's primary account
-  //   if (!account) {
-  //     const user = await prisma.user.findUnique({
-  //       where: { id: userId },
-  //       include: { accounts: { take: 1 } },
-  //     });
-  //     account = user?.accounts?.[0];
-  //   }
+  static async getBillStatus(reference) {
+    return this.status(`/billspayment/status?transReference=${encodeURIComponent(reference)}`, reference);
+  }
 
-  //   if (!account) throw new Error("Account not found");
-
-  //   const amountNum = parseFloat(amount);
-  //   if (isNaN(amountNum) || amountNum < 100) throw new Error("Invalid amount");
-
-  //   const ref = `BILL${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-
-  //   const payload = {
-  //     billerId,
-  //     amount: String(amountNum),
-  //     accountNumber: account.accountNumber,
-  //     transactionReference: ref,
-  //     ...fields,
-  //   };
-
-  //   const transaction = await prisma.transaction.create({
-  //     data: {
-  //       userId,
-  //       accountId: account.id,
-  //       amount: amountNum,
-  //       reference: ref,
-  //       type: "DEBIT",
-  //       status: "PENDING",
-  //       description: `TV: ${fields.customerId || billerId}`,
-  //     },
-  //   });
-
-  //   try {
-  //     const response = await this.makeRequest("post", "/billspayment/pay", payload);
-
-  //     await prisma.$transaction([
-  //       prisma.account.update({
-  //         where: { id: account.id },
-  //         data: { balance: { decrement: amountNum } },
-  //       }),
-  //       prisma.transaction.update({
-  //         where: { id: transaction.id },
-  //         data: { status: "SUCCESS", metadata: response },
-  //       }),
-  //     ]);
-
-  //     return { success: true, data: response, ref, account };
-  //   } catch (error) {
-  //     await prisma.transaction.update({
-  //       where: { id: transaction.id },
-  //       data: { status: "FAILED", metadata: { error: error.message } },
-  //     });
-  //     throw error;
-  //   }
-  // }
+  static async status(endpoint, reference) {
+    try {
+      const body = await this.makeRequest("get", endpoint);
+      return { outcome: classifyStatusQuery(body), raw: body };
+    } catch (error) {
+      logger.warn(`[VAS] status ${reference} failed [${error.response?.status || error.code}]`);
+      return { outcome: OUTCOME.UNKNOWN, raw: null };
+    }
+  }
 }
 
 export default PsbVasService;
