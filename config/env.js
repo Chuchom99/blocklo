@@ -31,6 +31,7 @@ const schema = Joi.object({
   RUN_WORKERS: Joi.boolean().truthy("true").falsy("false").default(true),
 
   DATABASE_URL: required(),
+  DIRECT_URL: required(), // used by `prisma migrate`; must be the non-pooled endpoint
   REDIS_URL: required(),
 
   PSB_ENV: Joi.string().valid("sandbox", "production").default("sandbox"),

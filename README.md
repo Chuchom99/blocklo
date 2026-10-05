@@ -55,6 +55,16 @@ To run workers separately: set `RUN_WORKERS=false` on the API servers and run `n
 
 `tests/integration/postman.test.js` replays the whole collection against the app on every test run, so the payloads stay valid.
 
+## Database (Neon)
+
+- `DATABASE_URL` is Neon's **pooled** endpoint (`-pooler` host) with `pgbouncer=true`. The app uses it.
+- `DIRECT_URL` is the **direct** endpoint (the same host without `-pooler`). `prisma migrate` uses it and fails through the pooler.
+- Add `connect_timeout=15` to both so a suspended compute can wake up.
+- The reconcile and expiry jobs query the database every 5 minutes, which keeps Neon's compute awake (its default auto-suspend is 5 minutes). Budget for an always-on compute, or raise those intervals in `jobs/workers.js`.
+- Use a Neon **branch** for staging or sandbox testing instead of a separate database.
+
+On a fresh database, just run `npx prisma migrate deploy`. The baseline steps below only apply to the old pre-migrations database.
+
 ## Deploying this version over the old one
 
 1. **Rotate every secret** that was in the old committed `.env`. They are compromised.
