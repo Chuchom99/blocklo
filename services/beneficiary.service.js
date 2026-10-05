@@ -1,121 +1,53 @@
-// services/beneficiary.service.js
 import prisma from "../config/prisma.js";
-import { BankService } from "./bank.service.js";
+import config from "../config/env.js";
 import PsbService from "./psb.service.js";
-import logger from "../config/logger.js";
+import { BankService } from "./bank.service.js";
+import { PSB_BANK_CODE_9PSB } from "../utils/constant.js";
+import { maskAccount } from "../utils/format.js";
+
+// Resolve the real account holder name before money is sent or a beneficiary is saved.
+// Returns null when the account can't be verified.
+export async function resolveAccountName(accountNumber, bankCode) {
+  if (bankCode === PSB_BANK_CODE_9PSB) {
+    const local = await prisma.account.findUnique({ where: { accountNumber }, select: { accountName: true } });
+    if (local?.accountName) return local.accountName;
+  }
+  const name = await PsbService.otherBankEnquiry(accountNumber, bankCode);
+  if (name) return name;
+  // 9PSB sandbox accounts don't support name enquiry.
+  return config.psb.isSandbox ? "UNVERIFIED (sandbox)" : null;
+}
 
 export class BeneficiaryService {
   static async save(userId, alias, accountNo, bankInput) {
-    alias = alias.trim().toLowerCase();
-    const input = bankInput.trim().toLowerCase();
+    const bank = await BankService.findCode(bankInput);
+    if (!bank) return `I don't recognise the bank "${bankInput}". Try the full name, e.g. "GTBank", "Access Bank", "9PSB".`;
 
-    try {
-      let accountName = "Pending Verification";
-      let bankName = bankInput;
-      let bankCode = "120001"; // fallback
-      let isValidated = false;
+    const accountName = await resolveAccountName(accountNo, bank.code);
+    if (!accountName) return "I couldn't verify that account. Please check the number and bank.";
 
-      // === INTERNAL 9PSB TRANSFER ===
-      if (["9psb", "psb", "internal", "wallet", "blocklo"].includes(input)) {
-        const account = await prisma.account.findUnique({
-          where: { accountNumber: accountNo }
-        });
-
-        if (!account) return `9PSB account ${accountNo} not found.`;
-
-        accountName = account.accountName;
-        bankName = "9 Payment Service Bank";
-        bankCode = "120001";
-        isValidated = true;
-      }
-      // === EXTERNAL BANK ===
-      else {
-        const bank = await BankService.findCode(bankInput);
-        if (!bank) {
-          return `I don't recognize "${bankInput}". Try full name like "GTBank", "Access Bank", "Zenith", etc.`;
-        }
-
-        bankCode = bank.code;
-        bankName = bank.name.toUpperCase().replace("plc", "Plc");
-
-        // === NAME ENQUIRY (only try if not in obvious test mode) ===
-        try {
-          const enquiry = await PsbService.otherBankEnquiry(accountNo, bankCode);
-          if (enquiry?.accountName) {
-            accountName = enquiry.accountName;
-            isValidated = true;
-            logger.info(`[BENEFICIARY] Name enquiry success: ${accountName}`);
-          } else {
-            accountName = "Name enquiry failed (test mode?)";
-          }
-        } catch (err) {
-          // In test mode, 9PSB returns 400 → safe to ignore
-          if (err.response?.status === 400 || err.message.includes("bank is required")) {
-            accountName = "Verification skipped (test mode)";
-          } else {
-            logger.warn(`[BENEFICIARY] Name enquiry failed: ${err.message}`);
-            accountName = "Could not verify name";
-          }
-        }
-      }
-
-      // === SAVE OR UPDATE ===
-      const beneficiary = await prisma.beneficiary.upsert({
-        where: { userId_alias: { userId, alias } },
-        update: {
-          accountNo,
-          bankCode,
-          bankName,
-          accountName,
-          isValidated,
-        },
-        create: {
-          userId,
-          alias,
-          accountNo,
-          bankCode,
-          bankName,
-          accountName,
-          isValidated,
-        },
-      });
-
-      const status = isValidated ? "Verified" : "Saved (not verified)";
-      return `Beneficiary saved!\n\n` +
-             `*${alias.toUpperCase()}*\n` +
-             `${accountName}\n` +
-             `${accountNo} • ${bankName}\n` +
-             `${status}`;
-
-    } catch (err) {
-      logger.error(`[BENEFICIARY] Save failed:`, err);
-      return `Failed to save beneficiary: ${err.message}`;
-    }
+    const key = alias.trim().toLowerCase();
+    await prisma.beneficiary.upsert({
+      where: { userId_alias: { userId, alias: key } },
+      update: { accountNo, bankCode: bank.code, bankName: bank.name, accountName, isValidated: true },
+      create: { userId, alias: key, accountNo, bankCode: bank.code, bankName: bank.name, accountName, isValidated: true },
+    });
+    return `Beneficiary saved ✅\n\n*${key.toUpperCase()}*\n${accountName}\n${maskAccount(accountNo)} • ${bank.name}\n\nSend money with: *send 2000 to ${key}*`;
   }
 
-  // === LIST BENEFICIARIES ===
   static async list(userId) {
-    const list = await prisma.beneficiary.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-    });
-
-    if (list.length === 0) return "You have no saved beneficiaries.\n\nReply: `save <name> <account> <bank>`";
-
-    let reply = "*Your Saved Beneficiaries*\n\n";
-    list.forEach((b, i) => {
-      const check = b.isValidated ? "Verified" : "Warning (not verified)";
-      reply += `${i + 1}. *${b.alias.toUpperCase()}*\n   ${b.accountName}\n   ${b.accountNo} • ${b.bankName}\n   ${check}\n\n`;
-    });
-
-    reply += `_Reply with alias to send money (e.g. "babe 500")_`;
-    return reply;
+    const list = await prisma.beneficiary.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
+    if (list.length === 0) return "You have no saved beneficiaries yet.\n\nTo save one: *save mom 0123456789 GTBank*";
+    const rows = list.map((b, i) => `${i + 1}. *${b.alias.toUpperCase()}*\n   ${b.accountName}\n   ${maskAccount(b.accountNo)} • ${b.bankName}`);
+    return `*Your saved beneficiaries*\n\n${rows.join("\n\n")}\n\nSend with: *send 2000 to <name>*`;
   }
 
-  // === FIND BY ALIAS ===
-  static async findByAlias(userId, alias) {
-    return await prisma.beneficiary.findUnique({
-      where: { userId_alias: { userId, alias: alias.toLowerCase().trim() } },
-    });
+  static findByAlias(userId, alias) {
+    return prisma.beneficiary.findUnique({ where: { userId_alias: { userId, alias: alias.toLowerCase().trim() } } });
+  }
+
+  static async remove(userId, alias) {
+    const { count } = await prisma.beneficiary.deleteMany({ where: { userId, alias: alias.toLowerCase().trim() } });
+    return count > 0;
   }
 }

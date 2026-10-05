@@ -1,0 +1,71 @@
+{
+  "version": "6.3",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "CONFIRM": ["INFO"],
+    "INFO": []
+  },
+  "screens": [
+    {
+      "id": "CONFIRM",
+      "title": "Confirm payment",
+      "data": {
+        "summary": { "type": "string", "__example__": "Send ₦5,000.00 to JOHN DOE\nGTBank • ******6789" },
+        "amount": { "type": "string", "__example__": "₦5,000.00" },
+        "error_text": { "type": "string", "__example__": "Incorrect PIN. 4 attempts left." },
+        "has_error": { "type": "boolean", "__example__": false }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextHeading", "text": "${data.amount}" },
+          { "type": "TextBody", "text": "${data.summary}" },
+          { "type": "TextCaption", "text": "${data.error_text}", "visible": "${data.has_error}" },
+          {
+            "type": "Form",
+            "name": "pin_form",
+            "children": [
+              {
+                "type": "TextInput",
+                "name": "pin",
+                "label": "Transaction PIN",
+                "input-type": "passcode",
+                "required": true,
+                "min-chars": 4,
+                "max-chars": 4,
+                "helper-text": "Enter your 4-digit PIN. We will never ask for it in chat."
+              },
+              {
+                "type": "Footer",
+                "label": "Pay",
+                "on-click-action": { "name": "data_exchange", "payload": { "pin": "${form.pin}" } }
+              }
+            ]
+          },
+          {
+            "type": "EmbeddedLink",
+            "text": "Cancel this payment",
+            "on-click-action": { "name": "data_exchange", "payload": { "cancel": true } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "INFO",
+      "title": "Payment",
+      "terminal": true,
+      "data": {
+        "title": { "type": "string", "__example__": "Request closed" },
+        "message": { "type": "string", "__example__": "This payment request has expired." }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextHeading", "text": "${data.title}" },
+          { "type": "TextBody", "text": "${data.message}" },
+          { "type": "Footer", "label": "Close", "on-click-action": { "name": "complete", "payload": {} } }
+        ]
+      }
+    }
+  ]
+}

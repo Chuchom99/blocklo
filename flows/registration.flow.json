@@ -1,0 +1,94 @@
+{
+  "version": "6.3",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "REGISTER": ["INFO"],
+    "INFO": []
+  },
+  "screens": [
+    {
+      "id": "REGISTER",
+      "title": "Open your account",
+      "data": {
+        "error_text": { "type": "string", "__example__": "PINs do not match" },
+        "has_error": { "type": "boolean", "__example__": false }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextCaption", "text": "${data.error_text}", "visible": "${data.has_error}" },
+          {
+            "type": "Form",
+            "name": "registration",
+            "children": [
+              { "type": "TextInput", "name": "first_name", "label": "First name", "required": true },
+              { "type": "TextInput", "name": "last_name", "label": "Last name", "required": true },
+              { "type": "TextInput", "name": "email", "label": "Email", "input-type": "email", "required": true },
+              { "type": "DatePicker", "name": "date_of_birth", "label": "Date of birth", "required": true },
+              {
+                "type": "Dropdown",
+                "name": "gender",
+                "label": "Gender",
+                "required": true,
+                "data-source": [
+                  { "id": "0", "title": "Male" },
+                  { "id": "1", "title": "Female" }
+                ]
+              },
+              { "type": "TextInput", "name": "address", "label": "Residential address", "required": true },
+              { "type": "TextInput", "name": "bvn", "label": "BVN (11 digits)", "input-type": "number", "max-chars": 11 },
+              {
+                "type": "TextInput",
+                "name": "nin",
+                "label": "NIN (11 digits)",
+                "input-type": "number",
+                "max-chars": 11,
+                "helper-text": "Provide your BVN, your NIN, or both"
+              },
+              { "type": "TextInput", "name": "pin", "label": "Create a 4-digit PIN", "input-type": "passcode", "min-chars": 4, "max-chars": 4, "required": true },
+              { "type": "TextInput", "name": "confirm_pin", "label": "Confirm PIN", "input-type": "passcode", "min-chars": 4, "max-chars": 4, "required": true },
+              { "type": "OptIn", "name": "terms_agreement", "label": "I agree to the terms and conditions", "required": true },
+              {
+                "type": "Footer",
+                "label": "Open account",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "first_name": "${form.first_name}",
+                    "last_name": "${form.last_name}",
+                    "email": "${form.email}",
+                    "date_of_birth": "${form.date_of_birth}",
+                    "gender": "${form.gender}",
+                    "address": "${form.address}",
+                    "bvn": "${form.bvn}",
+                    "nin": "${form.nin}",
+                    "pin": "${form.pin}",
+                    "confirm_pin": "${form.confirm_pin}",
+                    "terms_agreement": "${form.terms_agreement}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "INFO",
+      "title": "Account",
+      "terminal": true,
+      "data": {
+        "title": { "type": "string", "__example__": "Already registered" },
+        "message": { "type": "string", "__example__": "This WhatsApp number already has an account." }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextHeading", "text": "${data.title}" },
+          { "type": "TextBody", "text": "${data.message}" },
+          { "type": "Footer", "label": "Close", "on-click-action": { "name": "complete", "payload": {} } }
+        ]
+      }
+    }
+  ]
+}
