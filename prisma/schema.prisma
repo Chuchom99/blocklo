@@ -3,116 +3,202 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")    
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id              String   @id @default(uuid())
-  email           String   @unique
-  phone           String   @unique
-  password        String?
-  transactionPin  String?
-  firstName       String
-  lastName        String
-  otherNames      String?  // 9PSB uses 'otherNames' instead of middleName
-  gender          Int?     // 0 = Male, 1 = Female
-  dateOfBirth     String?  // "dd/MM/yyyy" (store as string since 9PSB expects this format)
-  address         String?
-  placeOfBirth    String?
-  bvn             String?  @unique
-  nin             String?  @unique
-  ninUserId       String?  @unique
-  nationalIdentityNo String? @unique
-  nextOfKinName   String?
-  nextOfKinPhone  String?
-  referralName    String?
-  referralPhone   String?
-  whatsappId      String?  @unique
-  telegramId      String?  @unique
-  termsAgreed     Boolean
-  createdAt       DateTime @default(now())
+  id             String     @id @default(uuid())
+  email          String     @unique
+  phone          String     @unique
+  password       String?
+  transactionPin String?
+  pinFailedCount Int        @default(0)
+  pinLockedUntil DateTime?
+  firstName      String
+  lastName       String
+  otherNames     String? // 9PSB uses 'otherNames' instead of middleName
+  gender         Int? // 0 = Male, 1 = Female
+  dateOfBirth    String? // "dd/MM/yyyy" (9PSB expects this format)
+  address        String?
+  placeOfBirth   String?
 
-  kycLevel        Int      @default(2)  // 1 = Tier 1 (No KYC), 2 = Tier 2 (BVN), 3 = Tier 3 (NIN + Address)
+  // Identity numbers are stored encrypted (AES-256-GCM) with a keyed hash for uniqueness.
+  bvnEnc    String?
+  bvnHash   String? @unique
+  bvnLast4  String?
+  ninEnc    String?
+  ninHash   String? @unique
+  ninLast4  String?
+  ninUserId String? @unique
+  /// @deprecated Plaintext. Emptied by scripts/encrypt-pii.js; drop in a later migration.
+  bvn       String? @unique
+  /// @deprecated Plaintext. Emptied by scripts/encrypt-pii.js; drop in a later migration.
+  nin       String? @unique
 
-  updatedAt       DateTime @updatedAt
-  
-  // Relationships
-  kyc             KYC[]
-  accounts        Account[]
-  transactions    Transaction[]
-  beneficiaries   Beneficiary[]
+  nationalIdentityNo String?    @unique
+  nextOfKinName      String?
+  nextOfKinPhone     String?
+  referralName       String?
+  referralPhone      String?
+  whatsappId         String?    @unique // canonical msisdn, digits only, e.g. 2348012345678
+  telegramId         String?    @unique
+  termsAgreed        Boolean
+  status             UserStatus @default(ACTIVE)
+  kycLevel           Int        @default(1) // 1 = Tier 1, 2 = Tier 2 (BVN), 3 = Tier 3 (NIN + address)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  kyc            KYC[]
+  accounts       Account[]
+  transactions   Transaction[]
+  beneficiaries  Beneficiary[]
+  paymentIntents PaymentIntent[]
+  sessions       Session[]
 }
 
+enum UserStatus {
+  PENDING_WALLET
+  ACTIVE
+  BLOCKED
+}
 
 model KYC {
   id             String    @id @default(uuid())
   userId         String
+  bvnEnc         String?
+  bvnHash        String?   @unique
+  ninEnc         String?
+  ninHash        String?   @unique
+  /// @deprecated Plaintext. Emptied by scripts/encrypt-pii.js; drop in a later migration.
   bvn            String?   @unique
+  /// @deprecated Plaintext. Emptied by scripts/encrypt-pii.js; drop in a later migration.
   nin            String?   @unique
-  verificationId String?   // 9PSB reference or internal verification token
+  verificationId String? // 9PSB reference or internal verification token
   status         KYCStatus @default(PENDING)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   user           User      @relation(fields: [userId], references: [id])
 }
 
-
 model Account {
-  id            String       @id @default(uuid())
+  id            String   @id @default(uuid())
   userId        String
-  accountNumber String       @unique
+  accountNumber String   @unique
   accountName   String?
-  provider      String       @default("9PSB")
-  // balance       Float        @default(0.0)
-  currency      String       @default("NGN")
-  status        String       @default("ACTIVE")
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  provider      String   @default("9PSB")
+  currency      String   @default("NGN")
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  user          User         @relation(fields: [userId], references: [id])
-  transactions  Transaction[]
+  user           User            @relation(fields: [userId], references: [id])
+  transactions   Transaction[]
+  paymentIntents PaymentIntent[]
 }
 
-
 model Transaction {
-  id            String          @id @default(uuid())
-  userId        String
-  accountId     String
-  amount        Float
-  type          TransactionType
-  reference     String?         // ← Make optional (best for external refs)
-  status        String          @default("PENDING")
-  description   String?
-  destinationAccount String?
-  destinationName    String?
-  balanceAfter  Float?
-  metadata      Json?           // ← Store full PSB response here
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id                  String            @id @default(uuid())
+  userId              String
+  accountId           String
+  amount              Decimal           @db.Decimal(18, 2)
+  type                TransactionType
+  kind                TransactionKind   @default(OTHER)
+  reference           String            @unique // our idempotency key, sent to 9PSB
+  providerRef         String?
+  status              TransactionStatus @default(PENDING)
+  description         String?
+  destinationAccount  String?
+  destinationBankCode String?
+  destinationName     String?
+  balanceAfter        Decimal?          @db.Decimal(18, 2)
+  metadata            Json? // provider responses, for audit
+  requeryCount        Int               @default(0)
+  lastRequeryAt       DateTime?
+  needsReview         Boolean           @default(false)
+  intentId            String?           @unique
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
-  user          User            @relation(fields: [userId], references: [id])
-  account       Account         @relation(fields: [accountId], references: [id])
+  user    User           @relation(fields: [userId], references: [id])
+  account Account        @relation(fields: [accountId], references: [id])
+  intent  PaymentIntent? @relation(fields: [intentId], references: [id])
 
   @@index([userId, createdAt])
-  @@index([reference])
+  @@index([status, createdAt])
+}
+
+// A payment the user has asked for but not yet authorized with their PIN.
+// Every money movement goes DRAFT -> AUTHORIZED -> EXECUTING -> DONE | FAILED.
+model PaymentIntent {
+  id             String              @id @default(uuid())
+  userId         String
+  accountId      String
+  kind           TransactionKind
+  amount         Decimal             @db.Decimal(18, 2)
+  payload        Json
+  summary        String
+  status         PaymentIntentStatus @default(DRAFT)
+  channel        String              @default("whatsapp")
+  idempotencyKey String              @unique
+  expiresAt      DateTime
+  authorizedAt   DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id])
+  account     Account      @relation(fields: [accountId], references: [id])
+  transaction Transaction?
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
 }
 
 model Beneficiary {
-  id           String   @id @default(uuid())
-  userId       String
-  alias        String   // "babe", "mom", "john"
-  accountNo    String
-  bankCode     String   // "058" for GTBank
-  bankName     String   // "GTBank Plc"
-  accountName  String   // validated name from 9PSB
-  isValidated  Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  user          User            @relation(fields: [userId], references: [id])
+  id          String   @id @default(uuid())
+  userId      String
+  alias       String // "babe", "mom", "john"
+  accountNo   String
+  bankCode    String // "058" for GTBank
+  bankName    String // "GTBank Plc"
+  accountName String // validated name from 9PSB
+  isValidated Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id])
 
   @@unique([userId, alias]) // one alias per user
+}
+
+// Refresh-token session for the web/mobile app.
+model Session {
+  id          String    @id @default(uuid())
+  userId      String
+  familyId    String // all rotations of one login share a family
+  refreshHash String    @unique
+  userAgent   String?
+  ip          String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  replacedBy  String?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actor     String // "admin", "system", or a user id
+  action    String
+  target    String?
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
 }
 
 enum KYCStatus {
@@ -124,4 +210,31 @@ enum KYCStatus {
 enum TransactionType {
   CREDIT
   DEBIT
+}
+
+enum TransactionKind {
+  TRANSFER
+  AIRTIME
+  DATA
+  BILL
+  INFLOW
+  OTHER
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  UNKNOWN
+  REVERSED
+}
+
+enum PaymentIntentStatus {
+  DRAFT
+  AUTHORIZED
+  EXECUTING
+  DONE
+  FAILED
+  EXPIRED
+  CANCELLED
 }
