@@ -24,3 +24,16 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 private_key.pem
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+!public_key.pem
+*.key
+
+# runtime data
+logs/
+storage/
+public/receipts/
