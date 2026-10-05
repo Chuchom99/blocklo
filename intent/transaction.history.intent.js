@@ -1,154 +1,62 @@
 import prisma from "../config/prisma.js";
-import logger from "../config/logger.js";
-import { generateTransactionHistoryPDF } from "../utils/pdf.utils.js";
+import { clearState, setState } from "../services/conversation.state.js";
+import { naira } from "../utils/format.js";
+import { renderStatement } from "../utils/receipt.pdf.js";
+
+const PAGE_SIZE = 10;
+const START = /\b(history|transactions?|statement|mini statement|stmt)\b/i;
 
 class TransactionHistoryService {
-  static async process(userId, message, from) {
-    const lower = message.toLowerCase().trim();
+  static async start(ctx, input) {
+    if (!START.test(input)) return null;
+    return this.page(ctx, 1, /statement|stmt|pdf/i.test(input));
+  }
 
-    if (
-      lower.includes("transaction") ||
-      lower.includes("history") ||
-      lower.includes("statement") ||
-      lower.includes("transact") ||
-      lower.includes("mini statement") ||
-      lower === "stmt" ||
-      lower === "hist"
-    ) {
-      return await this.sendTransactionHistory(userId, from, message, 1); // ← pass message
-    }
-
-    if (
-      lower.includes("more") ||
-      lower.includes("next") ||
-      lower.startsWith("page ")
-    ) {
-      const page = lower.match(/\d+/)
-        ? parseInt(lower.match(/\d+/)?.[0])
-        : null;
-      return await this.sendTransactionHistory(
-        userId,
-        from,
-        message,
-        page || 2,
-      ); // ← pass message
-    }
-
+  // Only "more" right after a history page continues it.
+  static async continue(ctx, input, state) {
+    if (/^(more|next)$/i.test(input.trim())) return this.page(ctx, state.page + 1, false);
+    await clearState(ctx.from);
     return null;
   }
 
-  static async sendTransactionHistory(userId, from, userMessage, page = 1) {
-    if (!userId) {
-      return "I don't know who you are yet. Say *balance* to link your account.";
+  static async page(ctx, page, asPdf) {
+    const where = { accountId: ctx.account.id };
+    const [transactions, total] = await Promise.all([
+      prisma.transaction.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
+      prisma.transaction.count({ where }),
+    ]);
+
+    if (!transactions.length) {
+      await clearState(ctx.from);
+      return page === 1 ? "You have no transactions yet." : "No more transactions.";
     }
 
-    const limit = 10;
-    const skip = (page - 1) * limit;
+    const lines = transactions.map((t, i) => {
+      const sign = t.type === "CREDIT" ? "+" : "−";
+      const date = new Date(t.createdAt).toLocaleDateString("en-NG", { timeZone: "Africa/Lagos" });
+      return `${(page - 1) * PAGE_SIZE + i + 1}. ${sign}${naira(t.amount)} • ${t.description || t.destinationName || "Transaction"}\n   ${date} • ${t.status}`;
+    });
 
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: { accounts: { take: 1 } },
-      });
+    const hasMore = page * PAGE_SIZE < total;
+    if (hasMore) await setState(ctx.from, { intent: "history", page }, 600);
+    else await clearState(ctx.from);
 
-      if (!user) {
-        return "User not found. Please register first.";
-      }
+    const text = `*Transaction history* (page ${page} of ${Math.ceil(total / PAGE_SIZE)})\n\n${lines.join("\n\n")}${
+      hasMore ? "\n\n_Reply *more* for older transactions_" : ""
+    }${asPdf ? "" : "\n_Reply *statement* for a PDF_"}`;
 
-      if (!user.accounts?.[0]) {
-        return "No account linked. Say *balance* to refresh.";
-      }
-
-      const accountId = user.accounts[0].id;
-
-      const [transactions, total] = await Promise.all([
-        prisma.transaction.findMany({
-          where: { accountId }, // ← Use accountId, not userId (more accurate)
-          orderBy: { createdAt: "desc" },
-          skip,
-          take: limit + 1,
-          select: {
-            amount: true,
-            type: true,
-            description: true,
-            status: true,
-            destinationAccount: true,
-            destinationName: true,
-            reference: true,
-            createdAt: true,
-            balanceAfter: true,
-          },
+    if (!asPdf) return { text };
+    return {
+      text,
+      document: {
+        buffer: await renderStatement({
+          customerName: `${ctx.user.firstName} ${ctx.user.lastName}`,
+          accountNumber: ctx.account.accountNumber,
+          transactions,
         }),
-        prisma.transaction.count({ where: { accountId } }),
-      ]);
-
-      const hasMore = transactions.length > limit;
-      const txns = hasMore ? transactions.slice(0, limit) : transactions;
-
-      if (txns.length === 0) {
-        return page === 1
-          ? "You have no transactions yet. Make your first transfer!"
-          : "No more transactions.";
-      }
-
-      let text = `*Your Transaction History* (Page ${page} of ${Math.ceil(
-        total / limit,
-      )})\n\n`;
-      txns.forEach((t, i) => {
-        const sign = t.type === "CREDIT" ? "+" : "−";
-        const amount = `₦${Math.abs(t.amount).toLocaleString()}`;
-        const date = new Date(t.createdAt).toLocaleDateString("en-NG");
-        const desc =
-          t.description ||
-          t.destinationName ||
-          t.reference?.slice(-12) ||
-          "Transaction";
-
-        text += `${i + 1}. ${sign}${amount} • ${desc}\n   ${date} • ${
-          t.status
-        }\n\n`;
-      });
-
-      if (hasMore) {
-        text += `_Reply *more* or *page ${
-          page + 1
-        }* for older transactions_\n\n`;
-      }
-
-      // PDF Statement Trigger
-      const wantsPDF =
-        userMessage.toLowerCase().includes("statement") ||
-        userMessage.toLowerCase().includes("pdf") ||
-        userMessage.toLowerCase().includes("mini");
-
-      if (wantsPDF) {
-        const pdfPath = await generateTransactionHistoryPDF({
-          userId: user.id,
-          transactions: txns.slice(0, 20),
-          page,
-          total,
-          accountNumber: user.accounts[0].accountNumber,
-        });
-
-        text += `\nMini-statement attached (PDF)`;
-
-        return {
-          text,
-          document: {
-            url: `http://localhost:5000${pdfPath}`,
-            filename: `Mini_Statement_${
-              new Date().toISOString().split("T")[0]
-            }.pdf`,
-          },
-        };
-      }
-
-      text += `_Reply *statement* for PDF version_`;
-      return { text };
-    } catch (error) {
-      logger.error("[HISTORY] Error:", error);
-      return "Sorry, couldn't load your transactions. Try again.";
-    }
+        filename: `statement_${new Date().toISOString().slice(0, 10)}.pdf`,
+      },
+    };
   }
 }
 

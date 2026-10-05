@@ -1,132 +1,134 @@
-import {
-  handleBalance,
-  handleTransfer,
-  handleTransactionHistory,
-} from "../services/ai.handler.js";
-import { v4 as uuidv4 } from "uuid";
+import PsbService from "../services/psb.service.js";
 import WhatsAppService from "../services/whatsapp.services.js";
-import prisma from "../config/prisma.js";
+import { BeneficiaryService } from "../services/beneficiary.service.js";
+import TransferIntentService from "../intent/transfer.intent.js";
+import TransactionHistoryService from "../intent/transaction.history.intent.js";
+import { BeneficiaryIntentService } from "../intent/beneficiary.intent.js";
+import { VasIntentService } from "../intent/vas.intent.js";
+import { naira, parseAmount } from "../utils/format.js";
+import { isNigerianMobile, toLocalPhone } from "../utils/phone.js";
+
+// LLM tools. Identity always comes from ctx (the verified WhatsApp sender), never
+// from tool arguments. Money tools only *draft* a payment: the user must still
+// confirm it with their PIN in the secure Flow, so a confused or manipulated model
+// cannot move money on its own.
+
+const CONFIRMATION_SENT =
+  "A secure confirmation form has been sent to the user. Tell them to review it and enter their PIN there. The payment is NOT complete yet; do not say it is.";
+
+// Turn an intent handler's reply into a tool result for the model.
+async function deliver(ctx, reply) {
+  if (!reply) return "That request couldn't be handled.";
+  if (reply.sent) return CONFIRMATION_SENT;
+  if (typeof reply === "string") return reply;
+  await WhatsAppService.sendReply(ctx.from, reply);
+  return "The options were sent to the user as a separate message. Ask them to choose from it.";
+}
 
 export const psbFunctions = [
   {
     name: "get_balance",
-    description: "Fetch user's current wallet balance",
-    parameters: { type: "object", properties: {}, required: [] },
-    handler: async (args, context) => {
-      return await handleBalance(context.userId);
-    },
-  },
-  {
-    name: "transfer_money",
-    description:
-      "Transfer money from user wallet. Amount in NGN. For other banks, include bank_code.",
-    parameters: {
-      type: "object",
-      properties: {
-        amount: { type: "number", description: "Amount to transfer" },
-        destination_account: {
-          type: "string",
-          description: "Recipient account number",
-        },
-        bank_code: {
-          type: "string",
-          description: "Optional: 3-digit bank code (e.g., 011 for GTB)",
-        },
-        narration: { type: "string", description: "Optional memo" },
-      },
-      required: ["amount", "destination_account"],
-    },
-    handler: async (args, context) => {
-      const message = `transfer ${args.amount} to ${args.destination_account} ${
-        args.bank_code ? `bank ${args.bank_code}` : "within 9psb"
-      } ${args.narration || ""}`;
-      return await handleTransfer(context.from, message, context.userId);
+    description: "Get the user's current wallet balance.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    handler: async (_args, ctx) => {
+      const balance = await PsbService.getBalance(ctx.account.accountNumber);
+      return balance === null ? "Balance is temporarily unavailable." : `Balance: ${naira(balance)}`;
     },
   },
   {
     name: "get_transaction_history",
-    description: "Get last 5 transactions",
-    parameters: { type: "object", properties: {}, required: [] },
-    handler: async (args, context) => {
-      return await handleTransactionHistory(context.userId);
-    },
+    description: "Get the user's 10 most recent transactions.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    handler: async (_args, ctx) => (await TransactionHistoryService.page(ctx, 1, false)).text ?? "No transactions.",
   },
-  {
-    name: "start_registration",
-    description: "Trigger WhatsApp registration flow",
-    parameters: { type: "object", properties: {}, required: [] },
-    handler: async (args, context) => {
-      const flowId = process.env.WHATSAPP_REGISTRATION_FLOW_ID;
-      if (!flowId) return "Registration unavailable.";
-      const token = uuidv4();
-      await WhatsAppService.sendRegistrationFlow(context.from, flowId, token);
-      return "Please complete the form sent to your WhatsApp to register.";
-    },
-  },
-
   {
     name: "list_beneficiaries",
-    description: "List all saved beneficiaries for the user",
-    parameters: { type: "object", properties: {}, required: [] },
-    handler: async (args, { from }) => {
-      const normalized = from.replace(/[^\d]/g, "").replace(/^234/, "234");
-
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { whatsappId: normalized },
-            { phone: normalized.replace(/^234/, "0") },
-          ],
-        },
-        include: {
-          beneficiaries: {
-            orderBy: { createdAt: "desc" },
-            select: {
-              alias: true,
-              accountNo: true,
-              bankName: true,
-              accountName: true,
-            },
-          },
-        },
-      });
-
-      if (!user || user.beneficiaries.length === 0) {
-        return "You have no saved beneficiaries yet.\n\nTo save one, say:\n*send 5000 to 1234567890 GTBank*";
+    description: "List the user's saved beneficiaries.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    handler: async (_args, ctx) => BeneficiaryService.list(ctx.user.id),
+  },
+  {
+    name: "start_transfer",
+    description:
+      "Start a bank transfer. This only prepares it: the user confirms with their PIN in a secure form. Use either destination_account (10 digits) or beneficiary_alias.",
+    parameters: {
+      type: "object",
+      properties: {
+        amount: { type: "number", description: "Amount in naira" },
+        destination_account: { type: "string", description: "10-digit account number" },
+        bank_name: { type: "string", description: "Bank name, e.g. GTBank, Access, 9PSB" },
+        beneficiary_alias: { type: "string", description: "A saved beneficiary's name" },
+      },
+      required: ["amount"],
+      additionalProperties: false,
+    },
+    handler: async (args, ctx) => {
+      const amount = parseAmount(args.amount);
+      if (!amount) return "Ask the user for a valid amount.";
+      if (args.beneficiary_alias) {
+        const b = await BeneficiaryService.findByAlias(ctx.user.id, args.beneficiary_alias);
+        if (!b) return `There is no saved beneficiary called "${args.beneficiary_alias}".`;
+        return deliver(ctx, await TransferIntentService.confirm(ctx, {
+          amount,
+          accountNumber: b.accountNo,
+          bank: { code: b.bankCode, name: b.bankName },
+        }));
       }
-
-      const list = user.beneficiaries
-        .map(
-          (b, i) =>
-            `${i + 1}. *${b.alias}*\n   ${b.accountName}\n   ${b.accountNo} • ${b.bankName}`,
-        )
-        .join("\n\n");
-
-      return `Your Saved Beneficiaries:\n\n${list}\n\nReply with alias to send money fast!\n(e.g. *send 2000 to mom*)`;
+      if (!/^\d{10}$/.test(String(args.destination_account || ""))) return "Ask the user for the 10-digit account number.";
+      return deliver(ctx, await TransferIntentService.withBank(ctx, {
+        amount,
+        accountNumber: args.destination_account,
+        bankInput: args.bank_name,
+      }));
     },
   },
-  //  delete beneficiary
   {
-    name: "delete_beneficiary",
-    description: "Delete a saved beneficiary by alias",
+    name: "remove_beneficiary",
+    description: "Ask the user to confirm removing a saved beneficiary.",
     parameters: {
       type: "object",
       properties: { alias: { type: "string" } },
       required: ["alias"],
+      additionalProperties: false,
     },
-    handler: async ({ alias }, { from }) => {
-      const result = await prisma.beneficiary.deleteMany({
-        where: {
-          user: {
-            whatsappId: from.replace(/[^\d]/g, "").replace(/^234/, "234"),
-          },
-          alias: { equals: alias, mode: "insensitive" },
-        },
-      });
+    handler: async ({ alias }, ctx) => deliver(ctx, await BeneficiaryIntentService.requestDelete(ctx, alias)),
+  },
+];
 
-      return result.count > 0
-        ? `${alias} has been removed from your beneficiaries.`
-        : `No beneficiary found with alias "${alias}"`;
+export const psbVasFunctions = [
+  {
+    name: "start_airtime_purchase",
+    description: "Start an airtime purchase. The user confirms with their PIN in a secure form.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone_number: { type: "string", description: "Nigerian number, e.g. 08012345678" },
+        amount: { type: "number", description: "Amount in naira" },
+      },
+      required: ["phone_number", "amount"],
+      additionalProperties: false,
+    },
+    handler: async (args, ctx) => {
+      const amount = parseAmount(args.amount);
+      const phone = toLocalPhone(args.phone_number);
+      if (!amount) return "Ask the user for a valid amount.";
+      if (!isNigerianMobile(phone)) return "Ask the user for a valid Nigerian phone number.";
+      return deliver(ctx, await VasIntentService.confirmAirtime(ctx, phone, amount));
+    },
+  },
+  {
+    name: "show_data_plans",
+    description: "Show available data plans for a phone number so the user can pick one.",
+    parameters: {
+      type: "object",
+      properties: { phone_number: { type: "string" } },
+      required: ["phone_number"],
+      additionalProperties: false,
+    },
+    handler: async (args, ctx) => {
+      const phone = toLocalPhone(args.phone_number);
+      if (!isNigerianMobile(phone)) return "Ask the user for a valid Nigerian phone number.";
+      return deliver(ctx, await VasIntentService.showDataPlans(ctx, phone));
     },
   },
 ];

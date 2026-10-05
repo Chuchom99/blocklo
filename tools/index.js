@@ -1,6 +1,5 @@
-import { psbFunctions } from "./psb-tools.js";
-import { psbVasFunctions } from "./psb-vas-tools.js";
+import { psbFunctions, psbVasFunctions } from "./psb-tools.js";
 
-
+export const allTools = [...psbFunctions, ...psbVasFunctions];
 
 export { psbFunctions, psbVasFunctions };

@@ -1,227 +1,102 @@
-// services/cabletv.bill.service.js
 import PsbVasService from "../services/psb.vas.services.js";
-import redis from "../config/redis.js";
-import logger from "../config/logger.js";
-import prisma from "../config/prisma.js";
-import { generateVasReceipt } from "../utils/pdf.vas.utils.js";
+import { draftAndConfirm } from "../services/payment-intent.service.js";
+import { buildBill } from "../services/payment-builder.service.js";
+import { clearState, setState } from "../services/conversation.state.js";
+import { naira } from "../utils/format.js";
+import { listMessage } from "./list.js";
 
-const CABLE_TV_CATEGORY_ID = "4";
+const PROVIDERS = [
+  { id: "CW-DSTV", name: "DSTV" },
+  { id: "CW-GOTV", name: "GOtv" },
+  { id: "CW-STARTIMES", name: "StarTimes" },
+];
+const START = /\b(dstv|gotv|startimes|cable tv|cable|tv subscription|bouquet)\b/i;
 
 export class CableTVService {
-  static async process(userId, message, from) {
-    const lower = message.toLowerCase().trim();
-    const keywords = ["dstv", "gotv", "startimes", "tv", "cable", "subscription", "bouquet"];
-    if (!keywords.some(k => lower.includes(k))) return null;
+  static async start(ctx, input) {
+    const match = input.match(START);
+    if (!match) return null;
 
-    const cacheKey = `bill_tv:${from}`;
-    const existing = await redis.get(cacheKey);
-    if (existing) {
-      const flow = JSON.parse(existing);
-      return await this.handleFlow(userId, from, message, flow);
-    }
+    // "pay dstv" goes straight to the smart card step.
+    const direct = PROVIDERS.find((p) => p.name.toLowerCase() === match[1].toLowerCase());
+    if (direct) return this.askSmartcard(ctx, direct);
 
-    await redis.setEx(cacheKey, 3600, JSON.stringify({ step: "select_provider" }));
-    return await this.showProviders(userId, from);
+    await setState(ctx.from, { intent: "tv", step: "provider" });
+    return {
+      type: "interactive",
+      payload: {
+        type: "button",
+        body: { text: "📺 *Pay for cable TV*\n\nSelect your provider." },
+        action: { buttons: PROVIDERS.map((p) => ({ type: "reply", reply: { id: `TV_${p.id}`, title: p.name } })) },
+      },
+    };
   }
 
-  static async showProviders(userId, from) {
+  static async askSmartcard(ctx, provider) {
+    await setState(ctx.from, { intent: "tv", step: "smartcard", billerId: provider.id, billerName: provider.name });
+    return `*${provider.name}* selected.\n\nSend your smart card / IUC number.`;
+  }
+
+  static async continue(ctx, input, state) {
+    const text = input.trim();
+
+    if (state.step === "provider") {
+      const provider = PROVIDERS.find((p) => `TV_${p.id}` === text || p.name.toLowerCase() === text.toLowerCase());
+      if (!provider) return "Please choose DSTV, GOtv or StarTimes.";
+      return this.askSmartcard(ctx, provider);
+    }
+
+    if (state.step === "smartcard") {
+      if (!/^\d{10,12}$/.test(text)) return "That doesn't look right. Smart card numbers are 10–12 digits.";
+      return this.showBouquets(ctx, { ...state, smartcard: text });
+    }
+
+    if (state.step === "bouquet") {
+      const n = Number.parseInt(text, 10);
+      const bouquet = text.startsWith("BOUQUET_")
+        ? state.bouquets.find((b) => `BOUQUET_${b.itemId}` === text)
+        : state.bouquets[n - 1];
+      if (!bouquet) return "Please pick a bouquet from the list.";
+      return this.confirm(ctx, state, bouquet);
+    }
+
+    await clearState(ctx.from);
+    return null;
+  }
+
+  static async showBouquets(ctx, state) {
+    let items = [];
     try {
-      const response = await PsbVasService.getCategoryBillers(CABLE_TV_CATEGORY_ID);
-      const billers = response.data || [];
-
-      const popular = billers.filter(b => 
-        ["CW-DSTV", "CW-GOTV", "CW-STARTIMES"].includes(b.id)
-      );
-
-      let text = "*Select Your TV Provider*\n\n";
-      const buttons = popular.map(b => ({
-        type: "reply",
-        reply: { id: `TV_${b.id}`, title: b.name },
-      }));
-
-      popular.forEach((b, i) => text += `${i + 1}. ${b.name}\n`);
-
-      return {
-        type: "interactive",
-        payload: {
-          type: "button",
-          body: { text },
-          action: { buttons },
-        },
-      };
-    } catch (error) {
-      return "TV providers temporarily unavailable. Try again.";
+      const fields = await PsbVasService.getBillerFields(state.billerId);
+      items = fields?.data?.find((f) => f.fieldName === "itemId")?.items || [];
+    } catch {
+      await clearState(ctx.from);
+      return "Couldn't load bouquets right now. Please try again.";
     }
+
+    // Prices come from 9PSB and are stored server-side; the user only picks an item.
+    const bouquets = items
+      .map((b) => ({ itemId: String(b.itemId), name: b.itemName, amount: Number.parseFloat(b.amount) }))
+      .filter((b) => b.itemId && Number.isFinite(b.amount) && b.amount > 0);
+    if (!bouquets.length) {
+      await clearState(ctx.from);
+      return "No bouquets are available right now.";
+    }
+
+    await setState(ctx.from, { ...state, step: "bouquet", bouquets });
+    const text = bouquets.map((b, i) => `${i + 1}. ${b.name} — ${naira(b.amount)}`).join("\n");
+    return listMessage(
+      `Smart card: *${state.smartcard}*\n\n${text}\n\nPick a bouquet or reply with its number.`,
+      "Choose bouquet",
+      bouquets.map((b) => ({ id: `BOUQUET_${b.itemId}`, title: b.name.split(" - ")[0], description: naira(b.amount) })),
+    );
   }
 
-  static async handleFlow(userId, from, message, flow) {
-    const cacheKey = `bill_tv:${from}`;
-
-    if (flow.step === "select_provider") {
-      let billerId = null;
-      let billerName = "";
-
-      if (message.startsWith("TV_")) {
-        billerId = message.replace("TV_", "");
-      } else {
-        const map = {
-          dstv: "CW-DSTV",
-          gotv: "CW-GOTV",
-          startimes: "CW-STARTIMES",
-        };
-        billerId = map[message.toLowerCase()];
-        billerName = message.toUpperCase();
-      }
-
-      const validIds = ["CW-DSTV", "CW-GOTV", "CW-STARTIMES"];
-      if (!validIds.includes(billerId)) {
-        return "Please select DSTV, GOTV, or Startimes.";
-      }
-
-      await redis.setEx(cacheKey, 3600, JSON.stringify({
-        step: "enter_smartcard",
-        billerId,
-        billerName: billerName || billerId.replace("CW-", ""),
-      }));
-
-      return `Selected *${billerName || billerId.replace("CW-", "")}*\n\nPlease send your Smart Card / IUC Number`;
-    }
-
-    if (flow.step === "enter_smartcard") {
-      const smartcard = message.trim();
-      if (!/^\d{10,12}$/.test(smartcard)) {
-        return "Invalid Smart Card number. Must be 10–12 digits.";
-      }
-
-      await redis.setEx(cacheKey, 3600, JSON.stringify({
-        ...flow,
-        step: "select_bouquet",
-        smartcard,
-      }));
-
-      return await this.showBouquets(userId, from, flow.billerId, smartcard);
-    }
-
-    if (flow.step === "select_bouquet") {
-      // Handle button or text selection
-      const cached = await redis.get(`tv_bouquets:${from}`);
-      if (!cached) return "Session expired. Start again.";
-
-      const { bouquets } = JSON.parse(cached);
-      let selected = null;
-
-      if (message.startsWith("BOUQUET_")) {
-        const id = message.replace("BOUQUET_", "");
-        selected = bouquets.find(b => b.itemId === id);
-      } else {
-        const num = parseInt(message);
-        if (num >= 1 && num <= bouquets.length) {
-          selected = bouquets[num - 1];
-        }
-      }
-
-      if (!selected) return "Invalid selection. Tap a button or reply with number.";
-
-      return await this.confirmAndPay(userId, from, {
-        ...flow,
-        bouquet: selected,
-      });
-    }
-  }
-
-  static async showBouquets(userId, from, billerId, smartcard) {
-    try {
-      const fields = await PsbVasService.getBillerFields(billerId);
-      const amountField = fields.data.find(f => f.fieldName === "itemId");
-      const bouquets = amountField?.items || [];
-
-      if (bouquets.length === 0) {
-        return "No bouquets available right now.";
-      }
-
-      let text = `Smart Card: *${smartcard}*\n\nSelect Bouquet:\n\n`;
-      const buttons = bouquets.slice(0, 3).map(b => ({
-        type: "reply",
-        reply: { id: `BOUQUET_${b.itemId}`, title: `${b.itemName.split(" - ")[0]}` },
-      }));
-
-      bouquets.forEach((b, i) => {
-        text += `${i + 1}. ${b.itemName}\n`;
-      });
-
-      await redis.setEx(`tv_bouquets:${from}`, 3600, JSON.stringify({ bouquets }));
-
-      return {
-        type: "interactive",
-        payload: {
-          type: "button",
-          body: { text },
-          action: { buttons },
-        },
-      };
-    } catch (error) {
-      return "Could not load bouquets. Try again.";
-    }
-  }
-
-  static async confirmAndPay(userId, from, flow) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { accounts: true },
-    });
-    if (!user?.accounts?.[0]) return "Account not found.";
-
-    const account = user.accounts[0];
-
-    try {
-      const payload = {
-        billerId: flow.billerId,
-        customerId: flow.smartcard,
-        amount: flow.bouquet.amount,
-        itemId: flow.bouquet.itemId,
-      };
-
-      const response = await PsbVasService.payBill({
-        userId,
-        accountId: account.id,
-        billerId: flow.billerId,
-        amount: flow.bouquet.amount,
-        fields: payload,
-      });
-
-      await redis.del(`bill_tv:${from}`);
-      await redis.del(`tv_bouquets:${from}`);
-
-      const receiptPath = await generateVasReceipt({
-        ref: response.ref,
-        service: "Cable TV Payment",
-        amount: parseFloat(flow.bouquet.amount),
-        phoneNumber: user.phone || "N/A",
-        networkEmoji: "Television",
-        networkName: flow.billerName,
-        accountNumber: account.accountNumber,
-        customerName: `${user.firstName} ${user.lastName || ""}`.trim(),
-        smartcard: flow.smartcard,
-        bouquet: flow.bouquet.itemName,
-      });
-
-      return {
-        text:
-          `Cable TV Payment Successful!\n\n` +
-          `Provider: ${flow.billerName}\n` +
-          `Smart Card: ${flow.smartcard}\n` +
-          `Bouquet: ${flow.bouquet.itemName}\n` +
-          `Amount: ₦${parseFloat(flow.bouquet.amount).toLocaleString()}\n` +
-          `Ref: ${response.ref}\n\n` +
-          `Receipt attached`,
-        document: {
-          url: `http://localhost:5000${receiptPath}`,
-          filename: `tv_${flow.smartcard}.pdf`,
-        },
-      };
-    } catch (error) {
-      return `Payment failed: ${error.message}`;
-    }
+  static async confirm(ctx, state, bouquet) {
+    await clearState(ctx.from);
+    return draftAndConfirm(ctx, () =>
+      buildBill(ctx, { type: "tv", billerId: state.billerId, customerId: state.smartcard, itemId: bouquet.itemId }),
+    );
   }
 }
 
